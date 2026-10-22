@@ -3,9 +3,13 @@ updates:
   - package-ecosystem: nuget
     directory: /
     schedule: { interval: weekly, day: monday }
+    # Skip versions younger than a week: hijacked releases are usually caught and pulled by then.
+    cooldown: { default-days: 7 }
     groups:
       scanner:
         patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
+    # Skip versions younger than a week: hijacked releases are usually caught and pulled by then.
+    cooldown: { default-days: 7 }
