@@ -66,21 +66,23 @@ release key ([`SignedFeed.cs`](EwCapture.Core/SignedFeed.cs); public key in
 holds each package's SHA-256, which Velopack checks on download. The private key is
 kept offline, not on GitHub.
 
-## Check that a build matches this source
+## Check your install
 
-From 0.4.5 on, each version is built by GitHub Actions from a tag in this repository
-([`release.yml`](.github/workflows/release.yml)) and published as a zip on the
-[Releases](https://github.com/jcossin03/exiledwealth-scanner/releases) page with a
-signed build provenance attestation. Check a zip with:
+From 0.4.6 on, each version is built by GitHub Actions from a tag in this repository
+([`release.yml`](.github/workflows/release.yml)) and published as an immutable
+[release](https://github.com/jcossin03/exiledwealth-scanner/releases). The build's files carry a
+signed provenance attestation, and the installer and updates carry them unchanged. With the
+[GitHub CLI](https://cli.github.com), check your installed copy:
 
+```powershell
+gh attestation verify "$env:LOCALAPPDATA\ExiledWealthScanner\current\ew-capture.dll" `
+  -R jcossin03/exiledwealth-scanner --source-ref refs/tags/v0.4.6
 ```
-gh attestation verify ew-capture-<version>-win-x64.zip -R jcossin03/exiledwealth-scanner
-```
 
-The installer and updates carry that zip's files unchanged: after installing, compare
-them with `%LocalAppData%\ExiledWealthScanner\current` (Velopack adds its own small
-files there, such as `sq.version`). The release script that packs and signs them is
-private, so this check is what ties your install to the public source.
+It prints the commit and workflow that built the file; a changed file has no attestation.
+Our code is `ew-capture.dll` and `EwCapture.Core.dll` (`ew-capture.exe` is .NET's launcher).
+The release script that packs the installer and signs the update feed is private: this
+check is what ties your install to the public source.
 
 ## Build it yourself
 
