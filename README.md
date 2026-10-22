@@ -47,7 +47,7 @@ list holds the SHA-256 of every package, which Velopack checks on download.
 
 ## Check that a build matches this source
 
-Each release is built by GitHub Actions from a tag in this repository
+From 0.4.4 on, each release is built by GitHub Actions from a tag in this repository
 ([`release.yml`](.github/workflows/release.yml)) and carries a signed build
 provenance attestation. To check a download:
 

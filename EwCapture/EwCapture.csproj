@@ -14,7 +14,7 @@
          ew-capture.exe: Velopack updates installed copies by it. -->
     <AssemblyTitle>Exiled Wealth</AssemblyTitle>
     <Product>Exiled Wealth</Product>
-    <Version>0.4.3</Version>
+    <Version>0.4.4</Version>
     <ApplicationIcon>ew.ico</ApplicationIcon>
     <!-- LibraryImport generates the P/Invoke marshalling as unsafe code. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
