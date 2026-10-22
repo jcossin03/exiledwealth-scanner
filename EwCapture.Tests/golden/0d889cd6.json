@@ -1,0 +1,42 @@
+{
+ "capture": "0d889cd6-98b5-461f-aff3-3782e28e45b2.png",
+ "layout": "Fragment",
+ "checkedByEye": true,
+ "reads": [
+  {
+   "slot": 6,
+   "item": "Breach Splinter",
+   "count": 378
+  },
+  {
+   "slot": 7,
+   "item": "Simulacrum Splinter",
+   "count": 288
+  },
+  {
+   "slot": 10,
+   "item": "Breachlord Sac",
+   "count": 1
+  },
+  {
+   "slot": 12,
+   "item": "Head of the King",
+   "count": 1
+  },
+  {
+   "slot": 16,
+   "item": "Simulacrum",
+   "count": 2
+  },
+  {
+   "slot": 18,
+   "item": "An Audience with the King",
+   "count": 7
+  },
+  {
+   "slot": 21,
+   "item": "Shattered Triskelion",
+   "count": 2
+  }
+ ]
+}

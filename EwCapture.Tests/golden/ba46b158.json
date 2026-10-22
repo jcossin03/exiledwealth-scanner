@@ -1,0 +1,57 @@
+{
+ "capture": "ba46b158-5af1-4697-9dbc-6c87deffc21b.png",
+ "layout": "Ritual",
+ "checkedByEye": true,
+ "reads": [
+  {
+   "slot": 6,
+   "item": "Omen of Sinistral Exaltation",
+   "count": 10
+  },
+  {
+   "slot": 7,
+   "item": "Omen of Dextral Exaltation",
+   "count": 5
+  },
+  {
+   "slot": 8,
+   "item": "Omen of Greater Exaltation",
+   "count": 10
+  },
+  {
+   "slot": 15,
+   "item": "Omen of Resurgence",
+   "count": 3
+  },
+  {
+   "slot": 25,
+   "item": "Omen of Gambling",
+   "count": 4
+  },
+  {
+   "slot": 28,
+   "item": "Omen of Sanctification",
+   "count": 1
+  },
+  {
+   "slot": 31,
+   "item": "Omen of Chaotic Rarity",
+   "count": 3
+  },
+  {
+   "slot": 33,
+   "item": "Omen of Chaotic Monsters",
+   "count": 1
+  },
+  {
+   "slot": 34,
+   "item": "Omen of Dextral Crystallisation",
+   "count": 1
+  },
+  {
+   "slot": 39,
+   "item": "Omen of Chaotic Effectiveness",
+   "count": 7
+  }
+ ]
+}

@@ -1,0 +1,257 @@
+{
+ "capture": "34cd3d5d-ea73-4272-a84e-79be46667976.png",
+ "layout": "Essence",
+ "checkedByEye": false,
+ "reads": [
+  {
+   "slot": 6,
+   "item": "Essence of Electricity",
+   "count": 1
+  },
+  {
+   "slot": 12,
+   "item": "Greater Essence of the Body",
+   "count": 14
+  },
+  {
+   "slot": 13,
+   "item": "Greater Essence of the Mind",
+   "count": 6
+  },
+  {
+   "slot": 14,
+   "item": "Greater Essence of Enhancement",
+   "count": 42
+  },
+  {
+   "slot": 15,
+   "item": "Greater Essence of Abrasion",
+   "count": 35
+  },
+  {
+   "slot": 16,
+   "item": "Greater Essence of Flames",
+   "count": 5
+  },
+  {
+   "slot": 17,
+   "item": "Greater Essence of Ice",
+   "count": 7
+  },
+  {
+   "slot": 18,
+   "item": "Greater Essence of Electricity",
+   "count": 8
+  },
+  {
+   "slot": 19,
+   "item": "Greater Essence of Ruin",
+   "count": 15
+  },
+  {
+   "slot": 20,
+   "item": "Greater Essence of Battle",
+   "count": 4
+  },
+  {
+   "slot": 21,
+   "item": "Greater Essence of Sorcery",
+   "count": 40
+  },
+  {
+   "slot": 22,
+   "item": "Greater Essence of Haste",
+   "count": 5
+  },
+  {
+   "slot": 23,
+   "item": "Greater Essence of the Infinite",
+   "count": 14
+  },
+  {
+   "slot": 30,
+   "item": "Essence of Delirium",
+   "count": 1
+  },
+  {
+   "slot": 33,
+   "item": "Lesser Essence of the Body",
+   "count": 1
+  },
+  {
+   "slot": 36,
+   "item": "Lesser Essence of Abrasion",
+   "count": 1
+  },
+  {
+   "slot": 39,
+   "item": "Lesser Essence of Electricity",
+   "count": 1
+  },
+  {
+   "slot": 44,
+   "item": "Lesser Essence of the Infinite",
+   "count": 1
+  },
+  {
+   "slot": 45,
+   "item": "Perfect Essence of the Body",
+   "count": 9
+  },
+  {
+   "slot": 46,
+   "item": "Perfect Essence of the Mind",
+   "count": 12
+  },
+  {
+   "slot": 47,
+   "item": "Perfect Essence of Enhancement",
+   "count": 15
+  },
+  {
+   "slot": 48,
+   "item": "Perfect Essence of Abrasion",
+   "count": 1
+  },
+  {
+   "slot": 49,
+   "item": "Perfect Essence of Flames",
+   "count": 4
+  },
+  {
+   "slot": 50,
+   "item": "Perfect Essence of Ice",
+   "count": 8
+  },
+  {
+   "slot": 51,
+   "item": "Perfect Essence of Electricity",
+   "count": 5
+  },
+  {
+   "slot": 52,
+   "item": "Perfect Essence of Ruin",
+   "count": 3
+  },
+  {
+   "slot": 53,
+   "item": "Perfect Essence of Battle",
+   "count": 12
+  },
+  {
+   "slot": 54,
+   "item": "Perfect Essence of Sorcery",
+   "count": 8
+  },
+  {
+   "slot": 55,
+   "item": "Perfect Essence of Haste",
+   "count": 1
+  },
+  {
+   "slot": 56,
+   "item": "Perfect Essence of the Infinite",
+   "count": 4
+  },
+  {
+   "slot": 59,
+   "item": "Greater Essence of Seeking",
+   "count": 22
+  },
+  {
+   "slot": 60,
+   "item": "Perfect Essence of Seeking",
+   "count": 6
+  },
+  {
+   "slot": 61,
+   "item": "Essence of the Abyss",
+   "count": 16
+  },
+  {
+   "slot": 64,
+   "item": "Greater Essence of Insulation",
+   "count": 24
+  },
+  {
+   "slot": 65,
+   "item": "Perfect Essence of Insulation",
+   "count": 4
+  },
+  {
+   "slot": 66,
+   "item": "Lesser Essence of Thawing",
+   "count": 1
+  },
+  {
+   "slot": 68,
+   "item": "Greater Essence of Thawing",
+   "count": 28
+  },
+  {
+   "slot": 69,
+   "item": "Perfect Essence of Thawing",
+   "count": 9
+  },
+  {
+   "slot": 70,
+   "item": "Lesser Essence of Grounding",
+   "count": 1
+  },
+  {
+   "slot": 72,
+   "item": "Greater Essence of Grounding",
+   "count": 11
+  },
+  {
+   "slot": 73,
+   "item": "Perfect Essence of Grounding",
+   "count": 2
+  },
+  {
+   "slot": 75,
+   "item": "Essence of Alacrity",
+   "count": 1
+  },
+  {
+   "slot": 76,
+   "item": "Greater Essence of Alacrity",
+   "count": 9
+  },
+  {
+   "slot": 77,
+   "item": "Perfect Essence of Alacrity",
+   "count": 2
+  },
+  {
+   "slot": 79,
+   "item": "Essence of Opulence",
+   "count": 1
+  },
+  {
+   "slot": 80,
+   "item": "Greater Essence of Opulence",
+   "count": 2
+  },
+  {
+   "slot": 81,
+   "item": "Perfect Essence of Opulence",
+   "count": 5
+  },
+  {
+   "slot": 82,
+   "item": "Lesser Essence of Command",
+   "count": 1
+  },
+  {
+   "slot": 84,
+   "item": "Greater Essence of Command",
+   "count": 14
+  },
+  {
+   "slot": 85,
+   "item": "Perfect Essence of Command",
+   "count": 5
+  }
+ ]
+}

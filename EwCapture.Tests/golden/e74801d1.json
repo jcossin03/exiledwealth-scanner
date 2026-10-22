@@ -1,0 +1,77 @@
+{
+ "capture": "e74801d1-2893-4644-ae83-5cf3e8cf13ef.png",
+ "layout": "Abyss",
+ "checkedByEye": true,
+ "reads": [
+  {
+   "slot": 0,
+   "item": "Omen of Abyssal Echoes",
+   "count": 100
+  },
+  {
+   "slot": 1,
+   "item": "Omen of the Sovereign",
+   "count": 20
+  },
+  {
+   "slot": 2,
+   "item": "Omen of the Liege",
+   "count": 401
+  },
+  {
+   "slot": 3,
+   "item": "Omen of the Blackblooded",
+   "count": 9
+  },
+  {
+   "slot": 4,
+   "item": "Omen of Putrefaction",
+   "count": 117
+  },
+  {
+   "slot": 5,
+   "item": "Omen of Light",
+   "count": 1
+  },
+  {
+   "slot": 6,
+   "item": "Omen of Sinistral Necromancy",
+   "count": 186
+  },
+  {
+   "slot": 7,
+   "item": "Omen of Dextral Necromancy",
+   "count": 202
+  },
+  {
+   "slot": 8,
+   "item": "Gnawed Jawbone",
+   "count": 1
+  },
+  {
+   "slot": 9,
+   "item": "Preserved Jawbone",
+   "count": 20
+  },
+  {
+   "slot": 11,
+   "item": "Gnawed Rib",
+   "count": 4
+  },
+  {
+   "slot": 12,
+   "item": "Preserved Rib",
+   "count": 70
+  },
+  {
+   "slot": 14,
+   "item": "Gnawed Collarbone",
+   "count": 2
+  },
+  {
+   "slot": 15,
+   "item": "Preserved Collarbone",
+   "count": 25
+  }
+ ]
+}

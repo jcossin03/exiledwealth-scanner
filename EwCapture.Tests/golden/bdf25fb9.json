@@ -1,0 +1,42 @@
+{
+ "capture": "bdf25fb9-4de7-41b4-8f0d-72418ac11dfc.png",
+ "layout": "Breach",
+ "checkedByEye": true,
+ "reads": [
+  {
+   "slot": 0,
+   "item": "Flesh Catalyst",
+   "count": 5
+  },
+  {
+   "slot": 2,
+   "item": "Adaptive Catalyst",
+   "count": 2
+  },
+  {
+   "slot": 5,
+   "item": "Tul's Catalyst",
+   "count": 5
+  },
+  {
+   "slot": 7,
+   "item": "Chayula's Catalyst",
+   "count": 2
+  },
+  {
+   "slot": 8,
+   "item": "Carapace Catalyst",
+   "count": 5
+  },
+  {
+   "slot": 10,
+   "item": "Sibilant Catalyst",
+   "count": 6
+  },
+  {
+   "slot": 11,
+   "item": "Skittering Catalyst",
+   "count": 4
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+# A tag vX.Y.Z builds the app from that commit and publishes the files as a zip on
+# a GitHub release, with a signed build provenance attestation. The release script
+# (in the private site repo) downloads this zip, checks the attestation, then packs
+# it with Velopack and signs the update feed: the exe players get is this build.
+name: Release build
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write      # the GitHub release
+  id-token: write      # the attestation's signing identity
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Tag matches the app version
+        run: |
+          v="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' EwCapture/EwCapture.csproj)"
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but <Version> $v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - run: >
+          dotnet test EwCapture.Tests
+          --filter "FullyQualifiedName!~RecognitionTests&FullyQualifiedName!~TabStripTests&FullyQualifiedName!~StashGateTests&FullyQualifiedName!~StripCoverTests"
+
+      # A plain folder, not one single-file exe: Velopack's delta updates stay small.
+      - run: dotnet publish EwCapture -c Release -r win-x64 -p:PublishSingleFile=false -o publish
+      - name: Zip
+        run: |
+          test -f publish/ew-capture.exe
+          (cd publish && zip -qrX "../ew-capture-$VERSION-win-x64.zip" .)
+          sha256sum "ew-capture-$VERSION-win-x64.zip"
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ew-capture-${{ env.VERSION }}-win-x64.zip
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" "ew-capture-$VERSION-win-x64.zip"
+          --title "Exiled Wealth scanner $VERSION"
+          --notes "Built by this workflow from $GITHUB_SHA. Install from https://exiledwealth.com/app/scanner; the installed app updates itself. Check this zip with: gh attestation verify ew-capture-$VERSION-win-x64.zip -R $GITHUB_REPOSITORY"

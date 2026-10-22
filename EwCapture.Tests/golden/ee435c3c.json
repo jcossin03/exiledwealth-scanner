@@ -1,0 +1,67 @@
+{
+ "capture": "ee435c3c-6856-45e7-957c-f3e87b968a75.png",
+ "layout": "Delirium",
+ "checkedByEye": false,
+ "reads": [
+  {
+   "slot": 2,
+   "item": "Diluted Liquid Ire",
+   "count": 16
+  },
+  {
+   "slot": 3,
+   "item": "Diluted Liquid Guilt",
+   "count": 18
+  },
+  {
+   "slot": 4,
+   "item": "Diluted Liquid Greed",
+   "count": 8
+  },
+  {
+   "slot": 5,
+   "item": "Liquid Paranoia",
+   "count": 24
+  },
+  {
+   "slot": 6,
+   "item": "Liquid Envy",
+   "count": 15
+  },
+  {
+   "slot": 7,
+   "item": "Liquid Disgust",
+   "count": 10
+  },
+  {
+   "slot": 8,
+   "item": "Liquid Despair",
+   "count": 5
+  },
+  {
+   "slot": 9,
+   "item": "Concentrated Liquid Fear",
+   "count": 3
+  },
+  {
+   "slot": 10,
+   "item": "Concentrated Liquid Suffering",
+   "count": 4
+  },
+  {
+   "slot": 40,
+   "item": "Ancient Diluted Liquid Ire",
+   "count": 1
+  },
+  {
+   "slot": 41,
+   "item": "Ancient Diluted Liquid Guilt",
+   "count": 4
+  },
+  {
+   "slot": 42,
+   "item": "Ancient Diluted Liquid Greed",
+   "count": 5
+  }
+ ]
+}

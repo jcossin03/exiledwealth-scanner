@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="EwCapture.Core/EwCapture.Core.csproj" />
+  <Project Path="EwCapture.Tests/EwCapture.Tests.csproj" />
+  <Project Path="EwCapture/EwCapture.csproj" />
+</Solution>

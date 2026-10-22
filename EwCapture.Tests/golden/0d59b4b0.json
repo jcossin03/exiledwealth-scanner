@@ -1,0 +1,112 @@
+{
+ "capture": "0d59b4b0-9035-4218-9021-e51f1b706d9b.png",
+ "layout": "Expedition",
+ "checkedByEye": true,
+ "reads": [
+  {
+   "slot": 0,
+   "item": "Verisium",
+   "count": 39200
+  },
+  {
+   "slot": 1,
+   "item": "Exceptional Verisium",
+   "count": 139
+  },
+  {
+   "slot": 2,
+   "item": "Medved's Crest of the Circle",
+   "count": 8
+  },
+  {
+   "slot": 3,
+   "item": "Vorana's Crest of the Scythe",
+   "count": 2
+  },
+  {
+   "slot": 4,
+   "item": "Uhtred's Crest of the Chalice",
+   "count": 12
+  },
+  {
+   "slot": 7,
+   "item": "Adaptive Alloy",
+   "count": 1
+  },
+  {
+   "slot": 8,
+   "item": "Protective Alloy",
+   "count": 1
+  },
+  {
+   "slot": 9,
+   "item": "Expansive Alloy",
+   "count": 2
+  },
+  {
+   "slot": 10,
+   "item": "Swift Alloy",
+   "count": 7
+  },
+  {
+   "slot": 11,
+   "item": "Cyclonic Alloy",
+   "count": 2
+  },
+  {
+   "slot": 12,
+   "item": "Prismatic Alloy",
+   "count": 3
+  },
+  {
+   "slot": 13,
+   "item": "Mystic Alloy",
+   "count": 4
+  },
+  {
+   "slot": 17,
+   "item": "The Runebinder's Alloy",
+   "count": 1
+  },
+  {
+   "slot": 19,
+   "item": "Expedition Logbook",
+   "count": 12
+  },
+  {
+   "slot": 22,
+   "item": "Vorana's Saga",
+   "count": 3
+  },
+  {
+   "slot": 24,
+   "item": "Olroth's Saga",
+   "count": 2
+  },
+  {
+   "slot": 25,
+   "item": "Blazing Flux",
+   "count": 3
+  },
+  {
+   "slot": 26,
+   "item": "Chilling Flux",
+   "count": 5
+  },
+  {
+   "slot": 27,
+   "item": "Crackling Flux",
+   "count": 2
+  },
+  {
+   "slot": 28,
+   "item": "Void Flux",
+   "count": 1
+  },
+  {
+   "slot": 31,
+   "item": "Liquid Verisium",
+   "count": 171
+  }
+ ]
+}

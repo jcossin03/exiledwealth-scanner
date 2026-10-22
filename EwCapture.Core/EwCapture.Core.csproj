@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform-neutral pieces: game-config parsing, capture metadata, the upload
+       queue and the API client. Kept off Windows APIs so the tests run anywhere. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Count-font templates cut from our own captures (no GGG art). -->
+    <EmbeddedResource Include="Resources/digits.json" LogicalName="EwCapture.Core.digits.json" />
+    <!-- Public half of the update signing key (SignedFeed). Without it, the scanner refuses every update. -->
+    <EmbeddedResource Include="Resources/update-key.pem" LogicalName="EwCapture.Core.update-key.pem" Condition="Exists('Resources/update-key.pem')" />
+  </ItemGroup>
+</Project>

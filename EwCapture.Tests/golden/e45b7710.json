@@ -1,0 +1,162 @@
+{
+ "capture": "e45b7710-adb4-4de3-8159-793b568d0234.png",
+ "layout": "Currency",
+ "checkedByEye": true,
+ "reads": [
+  {
+   "slot": 0,
+   "item": "Orb of Transmutation",
+   "count": 95
+  },
+  {
+   "slot": 1,
+   "item": "Orb of Augmentation",
+   "count": 25
+  },
+  {
+   "slot": 2,
+   "item": "Orb of Chance",
+   "count": 12
+  },
+  {
+   "slot": 3,
+   "item": "Orb of Annulment",
+   "count": 5
+  },
+  {
+   "slot": 4,
+   "item": "Orb of Alchemy",
+   "count": 158
+  },
+  {
+   "slot": 5,
+   "item": "Regal Orb",
+   "count": 210
+  },
+  {
+   "slot": 6,
+   "item": "Exalted Orb",
+   "count": 743
+  },
+  {
+   "slot": 7,
+   "item": "Chaos Orb",
+   "count": 98
+  },
+  {
+   "slot": 8,
+   "item": "Vaal Orb",
+   "count": 666
+  },
+  {
+   "slot": 10,
+   "item": "Divine Orb",
+   "count": 150
+  },
+  {
+   "slot": 12,
+   "item": "Arcanist's Etcher",
+   "count": 85
+  },
+  {
+   "slot": 13,
+   "item": "Armourer's Scrap",
+   "count": 321
+  },
+  {
+   "slot": 14,
+   "item": "Blacksmith's Whetstone",
+   "count": 194
+  },
+  {
+   "slot": 15,
+   "item": "Scroll of Wisdom",
+   "count": 1907
+  },
+  {
+   "slot": 16,
+   "item": "Artificer's Orb",
+   "count": 139
+  },
+  {
+   "slot": 17,
+   "item": "Lesser Jeweller's Orb",
+   "count": 54
+  },
+  {
+   "slot": 18,
+   "item": "Greater Jeweller's Orb",
+   "count": 54
+  },
+  {
+   "slot": 20,
+   "item": "Gemcutter's Prism",
+   "count": 141
+  },
+  {
+   "slot": 21,
+   "item": "Glassblower's Bauble",
+   "count": 38
+  },
+  {
+   "slot": 22,
+   "item": "Artificer's Shard",
+   "count": 2
+  },
+  {
+   "slot": 23,
+   "item": "Transmutation Shard",
+   "count": 3
+  },
+  {
+   "slot": 24,
+   "item": "Regal Shard",
+   "count": 6
+  },
+  {
+   "slot": 25,
+   "item": "Chance Shard",
+   "count": 2
+  },
+  {
+   "slot": 41,
+   "item": "Greater Orb of Transmutation",
+   "count": 133
+  },
+  {
+   "slot": 42,
+   "item": "Perfect Orb of Transmutation",
+   "count": 31
+  },
+  {
+   "slot": 43,
+   "item": "Greater Orb of Augmentation",
+   "count": 186
+  },
+  {
+   "slot": 44,
+   "item": "Perfect Orb of Augmentation",
+   "count": 53
+  },
+  {
+   "slot": 45,
+   "item": "Greater Regal Orb",
+   "count": 81
+  },
+  {
+   "slot": 46,
+   "item": "Perfect Regal Orb",
+   "count": 9
+  },
+  {
+   "slot": 47,
+   "item": "Greater Exalted Orb",
+   "count": 71
+  },
+  {
+   "slot": 49,
+   "item": "Greater Chaos Orb",
+   "count": 3
+  }
+ ]
+}

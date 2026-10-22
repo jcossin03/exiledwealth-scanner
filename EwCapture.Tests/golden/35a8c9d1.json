@@ -1,0 +1,252 @@
+{
+ "capture": "35a8c9d1-f04f-4bff-9f4f-56939ceef19e.png",
+ "layout": "Socketable/0",
+ "checkedByEye": false,
+ "reads": [
+  {
+   "slot": 0,
+   "item": "Lesser Desert Rune",
+   "count": 1
+  },
+  {
+   "slot": 2,
+   "item": "Greater Desert Rune",
+   "count": 18
+  },
+  {
+   "slot": 3,
+   "item": "Lesser Glacial Rune",
+   "count": 1
+  },
+  {
+   "slot": 5,
+   "item": "Greater Glacial Rune",
+   "count": 13
+  },
+  {
+   "slot": 8,
+   "item": "Greater Storm Rune",
+   "count": 20
+  },
+  {
+   "slot": 9,
+   "item": "Lesser Iron Rune",
+   "count": 2
+  },
+  {
+   "slot": 10,
+   "item": "Iron Rune",
+   "count": 2
+  },
+  {
+   "slot": 11,
+   "item": "Greater Iron Rune",
+   "count": 94
+  },
+  {
+   "slot": 12,
+   "item": "Lesser Body Rune",
+   "count": 1
+  },
+  {
+   "slot": 13,
+   "item": "Body Rune",
+   "count": 1
+  },
+  {
+   "slot": 14,
+   "item": "Greater Body Rune",
+   "count": 16
+  },
+  {
+   "slot": 17,
+   "item": "Greater Mind Rune",
+   "count": 10
+  },
+  {
+   "slot": 18,
+   "item": "Lesser Vision Rune",
+   "count": 1
+  },
+  {
+   "slot": 19,
+   "item": "Vision Rune",
+   "count": 1
+  },
+  {
+   "slot": 20,
+   "item": "Greater Vision Rune",
+   "count": 8
+  },
+  {
+   "slot": 21,
+   "item": "Lesser Rebirth Rune",
+   "count": 1
+  },
+  {
+   "slot": 22,
+   "item": "Rebirth Rune",
+   "count": 1
+  },
+  {
+   "slot": 23,
+   "item": "Greater Rebirth Rune",
+   "count": 11
+  },
+  {
+   "slot": 25,
+   "item": "Inspiration Rune",
+   "count": 1
+  },
+  {
+   "slot": 26,
+   "item": "Greater Inspiration Rune",
+   "count": 2
+  },
+  {
+   "slot": 27,
+   "item": "Lesser Stone Rune",
+   "count": 1
+  },
+  {
+   "slot": 28,
+   "item": "Stone Rune",
+   "count": 1
+  },
+  {
+   "slot": 29,
+   "item": "Greater Stone Rune",
+   "count": 11
+  },
+  {
+   "slot": 30,
+   "item": "Lesser Robust Rune",
+   "count": 1
+  },
+  {
+   "slot": 31,
+   "item": "Robust Rune",
+   "count": 2
+  },
+  {
+   "slot": 32,
+   "item": "Greater Robust Rune",
+   "count": 7
+  },
+  {
+   "slot": 34,
+   "item": "Adept Rune",
+   "count": 1
+  },
+  {
+   "slot": 35,
+   "item": "Greater Adept Rune",
+   "count": 6
+  },
+  {
+   "slot": 37,
+   "item": "Resolve Rune",
+   "count": 1
+  },
+  {
+   "slot": 38,
+   "item": "Greater Resolve Rune",
+   "count": 2
+  },
+  {
+   "slot": 43,
+   "item": "Hedgewitch Assandra's Rune of Wisdom",
+   "count": 1
+  },
+  {
+   "slot": 45,
+   "item": "The Greatwolf's Rune of Willpower",
+   "count": 1
+  },
+  {
+   "slot": 46,
+   "item": "Farrul's Rune of Grace",
+   "count": 3
+  },
+  {
+   "slot": 47,
+   "item": "Farrul's Rune of the Chase",
+   "count": 1
+  },
+  {
+   "slot": 48,
+   "item": "Craiceann's Rune of Warding",
+   "count": 5
+  },
+  {
+   "slot": 50,
+   "item": "The Greatwolf's Rune of Claws",
+   "count": 3
+  },
+  {
+   "slot": 51,
+   "item": "Farrul's Rune of the Hunt",
+   "count": 1
+  },
+  {
+   "slot": 52,
+   "item": "Countess Seske's Rune of Archery",
+   "count": 1
+  },
+  {
+   "slot": 53,
+   "item": "Courtesan Mannan's Rune of Cruelty",
+   "count": 1
+  },
+  {
+   "slot": 54,
+   "item": "Thane Grannell's Rune of Mastery",
+   "count": 3
+  },
+  {
+   "slot": 55,
+   "item": "Fenumus' Rune of Spinning",
+   "count": 4
+  },
+  {
+   "slot": 56,
+   "item": "Thane Girt's Rune of Wildness",
+   "count": 2
+  },
+  {
+   "slot": 57,
+   "item": "Craiceann's Rune of Recovery",
+   "count": 2
+  },
+  {
+   "slot": 59,
+   "item": "Thane Myrk's Rune of Summer",
+   "count": 2
+  },
+  {
+   "slot": 60,
+   "item": "Lady Hestra's Rune of Winter",
+   "count": 3
+  },
+  {
+   "slot": 61,
+   "item": "Thane Leld's Rune of Spring",
+   "count": 4
+  },
+  {
+   "slot": 62,
+   "item": "Fenumus' Rune of Agony",
+   "count": 2
+  },
+  {
+   "slot": 63,
+   "item": "Saqawal's Rune of Erosion",
+   "count": 2
+  },
+  {
+   "slot": 66,
+   "item": "Greater Ward Rune",
+   "count": 1
+  }
+ ]
+}

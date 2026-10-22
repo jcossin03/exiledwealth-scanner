@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tray app for the user's gaming PC. Builds on the Mac via
+       EnableWindowsTargeting; it only runs on Windows. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- 10.0.19041: Windows.Media.Ocr, for reading tab names -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ew-capture</AssemblyName>
+    <!-- What Windows shows (Task Manager, file properties). The file name stays
+         ew-capture.exe: Velopack updates installed copies by it. -->
+    <AssemblyTitle>Exiled Wealth</AssemblyTitle>
+    <Product>Exiled Wealth</Product>
+    <Version>0.4.3</Version>
+    <ApplicationIcon>ew.ico</ApplicationIcon>
+    <!-- LibraryImport generates the P/Invoke marshalling as unsafe code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="ew.ico" LogicalName="ew.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="1.2.161" />
+    <ProjectReference Include="..\EwCapture.Core\EwCapture.Core.csproj" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+</Project>

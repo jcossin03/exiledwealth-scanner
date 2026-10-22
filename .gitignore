@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+publish/
+# Velopack output (the release script)
+Releases/
+# real stash screenshots for the recognition tests: game art, never committed
+fixtures/
+# early experiments, kept locally only
+prototype/
+.DS_Store

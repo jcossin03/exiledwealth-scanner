@@ -1,0 +1,122 @@
+{
+ "capture": "4ad875eb-a608-44df-a7dc-0f1eda49b768.png",
+ "layout": "Socketable/3",
+ "checkedByEye": false,
+ "reads": [
+  {
+   "slot": 0,
+   "item": "Snake Idol",
+   "count": 9
+  },
+  {
+   "slot": 1,
+   "item": "Primate Idol",
+   "count": 15
+  },
+  {
+   "slot": 2,
+   "item": "Owl Idol",
+   "count": 4
+  },
+  {
+   "slot": 3,
+   "item": "Cat Idol",
+   "count": 5
+  },
+  {
+   "slot": 4,
+   "item": "Wolf Idol",
+   "count": 11
+  },
+  {
+   "slot": 5,
+   "item": "Stag Idol",
+   "count": 4
+  },
+  {
+   "slot": 6,
+   "item": "Boar Idol",
+   "count": 5
+  },
+  {
+   "slot": 7,
+   "item": "Bear Idol",
+   "count": 6
+  },
+  {
+   "slot": 8,
+   "item": "Ox Idol",
+   "count": 11
+  },
+  {
+   "slot": 9,
+   "item": "Rabbit Idol",
+   "count": 1
+  },
+  {
+   "slot": 10,
+   "item": "Fox Idol",
+   "count": 2
+  },
+  {
+   "slot": 13,
+   "item": "Idol of Grold",
+   "count": 1
+  },
+  {
+   "slot": 16,
+   "item": "Idol of Maxarius",
+   "count": 1
+  },
+  {
+   "slot": 17,
+   "item": "Idol of Ralakesh",
+   "count": 1
+  },
+  {
+   "slot": 21,
+   "item": "Idol of Greust",
+   "count": 2
+  },
+  {
+   "slot": 23,
+   "item": "Idol of Eramir",
+   "count": 3
+  },
+  {
+   "slot": 24,
+   "item": "Idol of Oak",
+   "count": 3
+  },
+  {
+   "slot": 25,
+   "item": "Idol of Alira",
+   "count": 1
+  },
+  {
+   "slot": 26,
+   "item": "Idol of Kraityn",
+   "count": 1
+  },
+  {
+   "slot": 27,
+   "item": "Idol of Silk",
+   "count": 1
+  },
+  {
+   "slot": 28,
+   "item": "Panther Idol",
+   "count": 3
+  },
+  {
+   "slot": 29,
+   "item": "Stoat Idol",
+   "count": 2
+  },
+  {
+   "slot": 30,
+   "item": "Hawk Idol",
+   "count": 2
+  }
+ ]
+}
