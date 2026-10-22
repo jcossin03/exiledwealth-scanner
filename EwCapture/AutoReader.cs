@@ -51,13 +51,22 @@ sealed class AutoReader : IDisposable
     /// <summary>Read the screen now (the hotkey), sending even if nothing changed.</summary>
     public Task ReadNowAsync() => TickAsync(force: true);
 
+    /// <summary>From the tray menu, which takes the game out of the front: read once it's back, within <paramref name="wait"/>.</summary>
+    public async Task ReadWhenGameInFrontAsync(TimeSpan wait)
+    {
+        var until = DateTime.UtcNow + wait;
+        while (GameWindow.Find(onlyIfInFront: true).Window is null && DateTime.UtcNow < until) await Task.Delay(250);
+        await TickAsync(force: true);
+    }
+
     async Task TickAsync(bool force)
     {
         if ((!Enabled && !force) || _reader is null || _layouts is null) return;
         if (Interlocked.Exchange(ref _busy, 1) == 1) return; // the previous read is still running
         try
         {
-            var (window, problem) = GameWindow.Find(onlyIfInFront: !force);
+            // Only ever the game in front: the hotkey too, so another window is never read.
+            var (window, problem) = GameWindow.Find(onlyIfInFront: true);
             if (window is null) { if (force) _status(problem!); return; }
             // Stash closed: stop after a thin strip of pixels. That's almost every tick while playing.
             if (!TabStrip.StashOpen(GameWindow.GrabGateStrip(window)))

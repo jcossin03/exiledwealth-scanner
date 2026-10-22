@@ -83,10 +83,10 @@ sealed class App : ApplicationContext
             _lastItem,
             new ToolStripSeparator(),
             _autoItem,
-            new ToolStripMenuItem($"Read now ({HotkeyText})", null, (_, _) => ReadNow()),
+            new ToolStripMenuItem($"Read now ({HotkeyText})", null, (_, _) => ReadNowFromMenu()),
             .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Send diagnostic screenshot", null, (_, _) => CaptureNow()) } : []),
-            _labelItem,
-            new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()),
+            // Screenshot tools exist only on dev (see Diagnostics).
+            .. (Diagnostics ? new ToolStripItem[] { _labelItem, new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()) } : []),
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
             .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Retry rejected captures", null, async (_, _) => await RetryRejected()) } : []),
             new ToolStripSeparator(),
@@ -191,6 +191,12 @@ sealed class App : ApplicationContext
     {
         _ = _auto.ReadNowAsync();
         if (_api.Token is not null && Diagnostics) CaptureNow();
+    }
+
+    void ReadNowFromMenu()
+    {
+        Notify("Switch to the game: it reads as soon as Path of Exile 2 is in front (within 10 s).", ToolTipIcon.Info);
+        _ = _auto.ReadWhenGameInFrontAsync(TimeSpan.FromSeconds(10));
     }
 
     void LoadCachedLayouts()
@@ -355,7 +361,9 @@ sealed class App : ApplicationContext
         _versionItem.Text = $"Version {Version}: {_updateStatus}";
         _updateItem.Text = _updater.ReadyVersion is { } v ? $"Restart to update to {v}" : "Check for updates";
         _updateItem.Enabled = _updater.Installed;
-        _queueItem.Text = $"Waiting to upload: {_snapshots.Pending().Count} reads, {_queue.Pending().Count} screenshots";
+        _queueItem.Text = Diagnostics
+            ? $"Waiting to upload: {_snapshots.Pending().Count} reads, {_queue.Pending().Count} screenshots"
+            : $"Waiting to upload: {_snapshots.Pending().Count} reads";
         _lastItem.Text = $"Last upload: {_lastUpload}";
         _labelItem.Text = _label is null ? "Set capture label…" : $"Label: {_label} (change…)";
         _linkItem.Text = linked ? "Unlink this PC…" : "Link to account…";
