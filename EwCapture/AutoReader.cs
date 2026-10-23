@@ -12,14 +12,13 @@ namespace EwCapture;
 sealed class AutoReader : IDisposable
 {
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
-    static readonly TimeSpan Heartbeat = TimeSpan.FromHours(6);
 
     readonly SnapshotQueue _queue;
     readonly IconCache _icons;
     readonly Action<string> _log;
     readonly Action<string> _status;
     readonly Action _queued;
-    readonly ChangeTracker _tracker = new(Heartbeat);
+    readonly ChangeTracker _tracker = new();
     readonly TabNamer _namer = new();
     readonly System.Threading.Timer _timer;
     readonly CountReader _counts = CountReader.FromEmbedded();

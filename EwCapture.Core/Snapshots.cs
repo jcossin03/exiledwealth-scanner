@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using EwCapture.Core.Recognition;
 
@@ -25,16 +27,16 @@ public sealed record Snapshot(DateTimeOffset CapturedAt, string Tool, string Pat
 }
 
 /// <summary>
-/// Decides which reads are worth sending: a tab whose counts changed, or one not
-/// sent for a while (so the site knows it still exists; unseen tabs drop out
-/// after a week).
+/// Decides which reads are worth sending: only a tab whose counts changed. The user scans
+/// to learn what changed and by how much; an unchanged tab is reported through the seen
+/// note instead (see <see cref="SeenTracker"/>), which the site keeps without storing a read.
 /// </summary>
-public sealed class ChangeTracker(TimeSpan heartbeat)
+public sealed class ChangeTracker
 {
     readonly Dictionary<string, (string Contents, DateTimeOffset At)> _sent = new();
 
     public bool ShouldSend(Snapshot s) =>
-        !_sent.TryGetValue(s.Key, out var last) || last.Contents != s.Contents || s.CapturedAt - last.At >= heartbeat;
+        !_sent.TryGetValue(s.Key, out var last) || last.Contents != s.Contents;
 
     public void MarkSent(Snapshot s) => _sent[s.Key] = (s.Contents, s.CapturedAt);
 }
@@ -73,7 +75,11 @@ public sealed class SeenTracker(TimeSpan every)
     }
 }
 
-/// <summary>Snapshots waiting on disk until the server has them, oldest first. One file per read.</summary>
+/// <summary>
+/// Snapshots waiting on disk until the server has them, oldest first. One file per tab: the
+/// user wants to know what the tab holds now, so a newer read of a tab replaces the one still
+/// waiting. A site outage then costs one upload per tab afterwards, not one per read.
+/// </summary>
 public sealed class SnapshotQueue(string dir)
 {
     static long _sequence;
@@ -83,7 +89,9 @@ public sealed class SnapshotQueue(string dir)
     public string Enqueue(Snapshot s)
     {
         System.IO.Directory.CreateDirectory(Directory);
-        var id = $"{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{Interlocked.Increment(ref _sequence):D8}-{Guid.NewGuid().ToString("N")[..6]}";
+        var tab = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(s.Key)))[..8];
+        foreach (var old in System.IO.Directory.EnumerateFiles(Directory, $"*-{tab}.json")) File.Delete(old);
+        var id = $"{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{Interlocked.Increment(ref _sequence):D8}-{tab}";
         var tmp = Path.Combine(Directory, id + ".json.tmp");
         File.WriteAllText(tmp, s.ToJson());
         File.Move(tmp, Path.Combine(Directory, id + ".json"));
@@ -102,7 +110,10 @@ public sealed class SnapshotQueue(string dir)
         foreach (var id in Pending())
         {
             var file = Path.Combine(Directory, id + ".json");
-            var outcome = await api.UploadSnapshotAsync(await File.ReadAllTextAsync(file, ct), ct);
+            string body;
+            try { body = await File.ReadAllTextAsync(file, ct); }
+            catch (FileNotFoundException) { continue; } // replaced by a newer read of the same tab meanwhile
+            var outcome = await api.UploadSnapshotAsync(body, ct);
             if (outcome == UploadOutcome.Stored) { File.Delete(file); sent++; continue; }
             if (outcome == UploadOutcome.Rejected)
             {

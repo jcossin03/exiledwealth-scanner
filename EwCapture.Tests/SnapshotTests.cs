@@ -30,16 +30,16 @@ public class SnapshotTests
     }
 
     [Fact]
-    public void OnlyChangedTabsOrStaleOnesAreSent()
+    public void OnlyChangedTabsAreSent()
     {
-        var t = new ChangeTracker(TimeSpan.FromHours(6));
+        var t = new ChangeTracker();
         var a = Snapshot.From(Read((10, "Divine Orb", 150)), "Currency", "t", "p", T0);
         Assert.True(t.ShouldSend(a));
         t.MarkSent(a);
         Assert.False(t.ShouldSend(a with { CapturedAt = T0.AddMinutes(5) }));
         Assert.True(t.ShouldSend(Snapshot.From(Read((10, "Divine Orb", 151)), "Currency", "t", "p", T0.AddMinutes(5))));
         Assert.True(t.ShouldSend(Snapshot.From(Read((10, "Divine Orb", 150)), "Currency 2", "t", "p", T0.AddMinutes(5)))); // another copy
-        Assert.True(t.ShouldSend(a with { CapturedAt = T0.AddHours(6) })); // heartbeat
+        Assert.False(t.ShouldSend(a with { CapturedAt = T0.AddDays(3) })); // unchanged stays unsent however long: the seen note covers it
     }
 
     [Fact]
@@ -80,6 +80,25 @@ public class SnapshotTests
         Assert.Equal(["\"A\"", "\"B\"", "\"C\""], bodies.Select(b => JsonDocument.Parse(b).RootElement.GetProperty("tab").GetProperty("name").GetRawText()));
         Assert.Single(q.Pending()); // C waits for the server to come back
         Assert.Single(Directory.GetFiles(q.RejectedDirectory)); // B is kept to look at
+    }
+
+    [Fact]
+    public async Task QueueKeepsOnlyTheLatestReadOfEachTab()
+    {
+        var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
+        var a = Snapshot.From(Read((10, "Divine Orb", 1)), "A", "t", "p", T0);
+        q.Enqueue(a);
+        q.Enqueue(a with { Tab = a.Tab with { Name = "B" } });
+        q.Enqueue(Snapshot.From(Read((10, "Divine Orb", 5)), "A", "t", "p", T0.AddMinutes(1)));
+        Assert.Equal(2, q.Pending().Count);
+
+        var bodies = new List<JsonElement>();
+        var http = new HttpClient(new Handler(async r => { bodies.Add(JsonDocument.Parse(await r.Content!.ReadAsStringAsync()).RootElement); return new HttpResponseMessage(HttpStatusCode.Created); }))
+            { BaseAddress = new Uri("https://dev.example/") };
+        Assert.Equal(2, await q.DrainAsync(new ScannerApi(http, "ewd_test")));
+        Assert.Equal(["B", "A"], bodies.Select(b => b.GetProperty("tab").GetProperty("name").GetString()));
+        Assert.Equal(5, bodies[1].GetProperty("reads")[0].GetProperty("count").GetInt32()); // the newer read of A, not the first
+        Assert.Empty(q.Pending());
     }
 
     sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> f) : HttpMessageHandler
