@@ -35,6 +35,8 @@ sealed class App : ApplicationContext
     SynchronizationContext? _ui;
     readonly ScannerApi _api;
     readonly System.Windows.Forms.Timer _retry = new() { Interval = 30_000 };
+    // A new read waits this long for more: flipping through ten tabs is one request, not ten.
+    readonly System.Windows.Forms.Timer _debounce = new() { Interval = 3_000 };
     readonly ToolStripMenuItem _accountItem = new() { Enabled = false };
     readonly ToolStripMenuItem _queueItem = new() { Enabled = false };
     readonly ToolStripMenuItem _lastItem = new() { Enabled = false };
@@ -70,7 +72,7 @@ sealed class App : ApplicationContext
         };
         _auto = new AutoReader(_snapshots, _icons, Log,
             status => OnUi(() => { _lastRead = status; RefreshMenu(); }),
-            () => OnUi(() => _ = Drain()));
+            () => OnUi(() => { _debounce.Stop(); _debounce.Start(); }));
         _autoItem.CheckedChanged += (_, _) => { _auto.Enabled = _autoItem.Checked; Log($"auto read {(_autoItem.Checked ? "on" : "off")}"); };
 
         _labelItem.Click += (_, _) => AskLabel();
@@ -113,6 +115,7 @@ sealed class App : ApplicationContext
             Notify($"{HotkeyText} is taken by another program. Use the tray menu's Read now instead.", ToolTipIcon.Warning);
 
         _retry.Tick += async (_, _) => await Drain();
+        _debounce.Tick += async (_, _) => { _debounce.Stop(); await Drain(); };
         _retry.Start();
         _layoutRefresh.Tick += async (_, _) => await LoadLayouts();
         _layoutRefresh.Start();
@@ -268,14 +271,14 @@ sealed class App : ApplicationContext
         _draining = true;
         try
         {
-            // Best effort: a lost note only means a session shows that tab as not opened.
-            if (_auto.Seen.Take() is { } seen && await _api.SendSeenAsync(seen) is not UploadOutcome.Stored) Log("seen note not sent");
+            // Reads and seen notes go in one request. A note is best effort: lost, it only means a session shows that tab as not opened.
+            var notes = _auto.Seen.TakeNotes();
             int pending = _queue.Pending().Count, reads = _snapshots.Pending().Count;
-            if (pending + reads == 0) return;
-            if (reads > 0)
+            if (pending + reads + notes.Count == 0) return;
+            if (reads + notes.Count > 0)
             {
-                var sentReads = await _snapshots.DrainAsync(_api);
-                Log($"reads: {sentReads} of {reads} uploaded, {_snapshots.Pending().Count} still waiting");
+                var (sentReads, outcome) = await _snapshots.SyncAsync(_api, notes);
+                Log($"sync: {sentReads} of {reads} reads stored, {notes.Count} seen notes, {_snapshots.Pending().Count} still waiting ({outcome})");
             }
             if (pending > 0 && Diagnostics)
             {
@@ -413,6 +416,7 @@ sealed class App : ApplicationContext
         if (disposing)
         {
             _retry.Dispose();
+            _debounce.Dispose();
             _layoutRefresh.Dispose();
             _updateTimer.Dispose();
             _auto.Dispose();

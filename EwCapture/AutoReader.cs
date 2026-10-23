@@ -30,7 +30,7 @@ sealed class AutoReader : IDisposable
     public bool Enabled { get; set; } = true;
 
     /// <summary>Tabs read with unchanged counts, sent by the app's upload pass.</summary>
-    public SeenTracker Seen { get; } = new(TimeSpan.FromMinutes(2));
+    public SeenTracker Seen { get; } = new(TimeSpan.FromMinutes(5));
 
     /// <param name="status">Shown in the tray menu (called off the UI thread).</param>
     /// <param name="queued">A snapshot was queued: time to upload (called off the UI thread).</param>

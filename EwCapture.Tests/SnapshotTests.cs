@@ -47,58 +47,67 @@ public class SnapshotTests
     {
         var t = new SeenTracker(TimeSpan.FromMinutes(2));
         var a = Snapshot.From(Read((10, "Divine Orb", 150)), "Currency", "t", "p", T0);
-        Assert.Null(t.Take());
+        Assert.Empty(t.TakeNotes());
         t.Note(a);
         t.Note(a with { CapturedAt = T0.AddMinutes(1) }); // too soon: still the first note
-        using (var doc = System.Text.Json.JsonDocument.Parse(t.Take()!))
-        {
-            var tab = Assert.Single(doc.RootElement.GetProperty("tabs").EnumerateArray());
-            Assert.Equal("Currency", tab.GetProperty("layout").GetString());
-            Assert.Equal("Currency", tab.GetProperty("name").GetString());
-            Assert.Equal(T0, tab.GetProperty("at").GetDateTimeOffset());
-        }
-        Assert.Null(t.Take()); // taking clears
+        var note = Assert.Single(t.TakeNotes());
+        Assert.Equal(new SeenNote("Currency", "Currency", 0, T0), note);
+        Assert.Empty(t.TakeNotes()); // taking clears
         t.Note(a with { CapturedAt = T0.AddMinutes(3) });
-        Assert.NotNull(t.Take());
+        Assert.Single(t.TakeNotes());
     }
 
     [Fact]
-    public async Task QueueUploadsInOrderAndSetsAsideRefusedOnes()
-    {
-        var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
-        var first = Snapshot.From(Read((10, "Divine Orb", 1)), "A", "t", "p", T0);
-        q.Enqueue(first);
-        q.Enqueue(first with { Tab = first.Tab with { Name = "B" } });
-        q.Enqueue(first with { Tab = first.Tab with { Name = "C" } });
-        var bodies = new List<string>();
-        var codes = new Queue<HttpStatusCode>([HttpStatusCode.Created, HttpStatusCode.BadRequest, HttpStatusCode.ServiceUnavailable]);
-        var http = new HttpClient(new Handler(async r => { bodies.Add(await r.Content!.ReadAsStringAsync()); return new HttpResponseMessage(codes.Dequeue()); }))
-            { BaseAddress = new Uri("https://dev.example/") };
-
-        Assert.Equal(1, await q.DrainAsync(new ScannerApi(http, "ewd_test")));
-
-        Assert.Equal(["\"A\"", "\"B\"", "\"C\""], bodies.Select(b => JsonDocument.Parse(b).RootElement.GetProperty("tab").GetProperty("name").GetRawText()));
-        Assert.Single(q.Pending()); // C waits for the server to come back
-        Assert.Single(Directory.GetFiles(q.RejectedDirectory)); // B is kept to look at
-    }
-
-    [Fact]
-    public async Task QueueKeepsOnlyTheLatestReadOfEachTab()
+    public async Task SyncSendsEveryWaitingReadAndTheSeenNotesInOneRequest()
     {
         var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
         var a = Snapshot.From(Read((10, "Divine Orb", 1)), "A", "t", "p", T0);
         q.Enqueue(a);
         q.Enqueue(a with { Tab = a.Tab with { Name = "B" } });
-        q.Enqueue(Snapshot.From(Read((10, "Divine Orb", 5)), "A", "t", "p", T0.AddMinutes(1)));
-        Assert.Equal(2, q.Pending().Count);
+        q.Enqueue(Snapshot.From(Read((10, "Divine Orb", 5)), "A", "t", "p", T0.AddMinutes(1))); // replaces the first read of A
+        var requests = new List<(string Path, JsonElement Body)>();
+        var http = new HttpClient(new Handler(async r =>
+        {
+            requests.Add((r.RequestUri!.AbsolutePath, JsonDocument.Parse(await r.Content!.ReadAsStringAsync()).RootElement));
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"league":"L","reads":[{"tabId":1},{"tabId":2}],"seen":1}""") };
+        })) { BaseAddress = new Uri("https://dev.example/") };
 
-        var bodies = new List<JsonElement>();
-        var http = new HttpClient(new Handler(async r => { bodies.Add(JsonDocument.Parse(await r.Content!.ReadAsStringAsync()).RootElement); return new HttpResponseMessage(HttpStatusCode.Created); }))
-            { BaseAddress = new Uri("https://dev.example/") };
-        Assert.Equal(2, await q.DrainAsync(new ScannerApi(http, "ewd_test")));
-        Assert.Equal(["B", "A"], bodies.Select(b => b.GetProperty("tab").GetProperty("name").GetString()));
-        Assert.Equal(5, bodies[1].GetProperty("reads")[0].GetProperty("count").GetInt32()); // the newer read of A, not the first
+        var (sent, outcome) = await q.SyncAsync(new ScannerApi(http, "ewd_test"), [new SeenNote("Currency", "C", 0, T0)]);
+
+        Assert.Equal((2, UploadOutcome.Stored), (sent, outcome));
+        var (path, body) = Assert.Single(requests);
+        Assert.Equal("/api/scanner/sync", path);
+        var reads = body.GetProperty("reads").EnumerateArray().ToList();
+        Assert.Equal(["B", "A"], reads.Select(r => r.GetProperty("name").GetString()));
+        Assert.Equal("Currency", reads[1].GetProperty("layout").GetString());
+        Assert.Equal(T0.AddMinutes(1), reads[1].GetProperty("at").GetDateTimeOffset());
+        Assert.Equal("[[10,5]]", reads[1].GetProperty("counts").GetRawText().Replace(" ", "").Replace("\n", "")); // counts only: no item, no confidence
+        Assert.False(reads[1].TryGetProperty("item", out _));
+        Assert.Equal("C", Assert.Single(body.GetProperty("seen").EnumerateArray()).GetProperty("name").GetString());
         Assert.Empty(q.Pending());
+    }
+
+    [Fact]
+    public async Task SyncSetsAsideARefusedReadAndKeepsEverythingOnAServerError()
+    {
+        var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
+        var a = Snapshot.From(Read((10, "Divine Orb", 1)), "A", "t", "p", T0);
+        q.Enqueue(a);
+        q.Enqueue(a with { Tab = a.Tab with { Name = "B" } });
+        var responses = new Queue<HttpResponseMessage>([
+            new(HttpStatusCode.OK) { Content = new StringContent("""{"league":"L","reads":[{"tabId":1},{"error":"invalid read"}],"seen":0}""") },
+            new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("""{"error":"later"}""") },
+        ]);
+        var http = new HttpClient(new Handler(_ => Task.FromResult(responses.Dequeue()))) { BaseAddress = new Uri("https://dev.example/") };
+        var api = new ScannerApi(http, "ewd_test");
+
+        Assert.Equal((1, UploadOutcome.Stored), await q.SyncAsync(api, []));
+        Assert.Empty(q.Pending()); // A stored, B set aside
+        Assert.Single(Directory.GetFiles(q.RejectedDirectory));
+
+        q.Enqueue(a with { Tab = a.Tab with { Name = "C" } });
+        Assert.Equal((0, UploadOutcome.RetryLater), await q.SyncAsync(api, []));
+        Assert.Single(q.Pending()); // C waits for the server to come back
     }
 
     sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> f) : HttpMessageHandler

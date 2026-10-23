@@ -21,6 +21,9 @@ public sealed record Snapshot(DateTimeOffset CapturedAt, string Tool, string Pat
 
     public string ToJson() => JsonSerializer.Serialize(this, CaptureMeta.Json);
 
+    /// <summary>The read as POST /api/scanner/sync takes it: counts only, the item being implied by the slot.</summary>
+    public object ToSyncRead() => new { layout = Tab.Layout, name = Tab.Name, index = Tab.Index, at = CapturedAt, counts = Reads.Select(r => new[] { r.Slot, r.Count }).ToArray() };
+
     /// <summary>What identifies the tab and its contents, for "did anything change".</summary>
     public string Key => $"{Tab.Layout}|{Tab.Name}";
     public string Contents => string.Join(",", Reads.Select(r => $"{r.Slot}:{r.Count}"));
@@ -62,18 +65,20 @@ public sealed class SeenTracker(TimeSpan every)
         }
     }
 
-    /// <summary>The notes not sent yet, as the request body; null when there are none. Taking them clears them.</summary>
-    public string? Take()
+    /// <summary>The notes not sent yet (at most 50); taking them clears them.</summary>
+    public List<SeenNote> TakeNotes()
     {
         lock (_lock)
         {
-            if (_pending.Count == 0) return null;
-            var tabs = _pending.Values.Take(50).Select(p => new { layout = p.Tab.Layout, name = p.Tab.Name, index = p.Tab.Index, at = p.At }).ToList();
+            var notes = _pending.Values.Take(50).Select(p => new SeenNote(p.Tab.Layout, p.Tab.Name, p.Tab.Index, p.At)).ToList();
             _pending.Clear();
-            return JsonSerializer.Serialize(new { tabs }, CaptureMeta.Json);
+            return notes;
         }
     }
 }
+
+/// <summary>A tab that was on screen with unchanged counts, for the sync body.</summary>
+public sealed record SeenNote(string Layout, string Name, int Index, DateTimeOffset At);
 
 /// <summary>
 /// Snapshots waiting on disk until the server has them, oldest first. One file per tab: the
@@ -103,27 +108,53 @@ public sealed class SnapshotQueue(string dir)
             ? System.IO.Directory.EnumerateFiles(Directory, "*.json").Select(p => Path.GetFileNameWithoutExtension(p)!).Order(StringComparer.Ordinal).ToList()
             : [];
 
-    /// <summary>Upload in order; stop at the first failure that isn't the snapshot's own fault.</summary>
-    public async Task<int> DrainAsync(ScannerApi api, CancellationToken ct = default)
+    /// <summary>The server takes up to this many reads in one request.</summary>
+    public const int MaxReadsPerSync = 50;
+
+    /// <summary>
+    /// Everything waiting, in one request per 50 reads, with the seen notes on the first: the server
+    /// answers each read on its own. A stored read is deleted, a refused one set aside to look at;
+    /// on a failure that isn't the reads' fault they all wait for the next try. Returns how many
+    /// reads were stored, and how the last request went.
+    /// </summary>
+    public async Task<(int Sent, UploadOutcome Outcome)> SyncAsync(ScannerApi api, IReadOnlyList<SeenNote> seen, CancellationToken ct = default)
     {
         int sent = 0;
-        foreach (var id in Pending())
+        var notes = seen;
+        while (true)
         {
-            var file = Path.Combine(Directory, id + ".json");
-            string body;
-            try { body = await File.ReadAllTextAsync(file, ct); }
-            catch (FileNotFoundException) { continue; } // replaced by a newer read of the same tab meanwhile
-            var outcome = await api.UploadSnapshotAsync(body, ct);
-            if (outcome == UploadOutcome.Stored) { File.Delete(file); sent++; continue; }
-            if (outcome == UploadOutcome.Rejected)
+            var ids = Pending().Take(MaxReadsPerSync).ToList();
+            if (ids.Count == 0 && notes.Count == 0) return (sent, UploadOutcome.Stored);
+            var reads = new List<(string Id, Snapshot Snap)>();
+            foreach (var id in ids)
             {
-                System.IO.Directory.CreateDirectory(RejectedDirectory);
-                File.Move(file, Path.Combine(RejectedDirectory, id + ".json"), overwrite: true);
-                continue;
+                try { reads.Add((id, JsonSerializer.Deserialize<Snapshot>(await File.ReadAllTextAsync(Path.Combine(Directory, id + ".json"), ct), CaptureMeta.Json)!)); }
+                catch (FileNotFoundException) { } // replaced by a newer read of the same tab meanwhile
+                catch (JsonException) { SetAside(id); } // a file we can't read back will never upload
             }
-            break;
+            var body = JsonSerializer.Serialize(new
+            {
+                reads = reads.Select(r => r.Snap.ToSyncRead()),
+                seen = notes.Select(n => new { layout = n.Layout, name = n.Name, index = n.Index, at = n.At }),
+            }, CaptureMeta.Json);
+            var res = await api.SyncAsync(body, ct);
+            notes = []; // sent, or lost: a note only tells a session the tab was checked
+            if (res.Outcome == UploadOutcome.Rejected) { foreach (var r in reads) SetAside(r.Id); } // the whole body was refused
+            if (res.Outcome != UploadOutcome.Stored) return (sent, res.Outcome);
+            for (int i = 0; i < reads.Count; i++)
+            {
+                var error = i < res.ReadErrors.Count ? res.ReadErrors[i] : "no answer";
+                if (error is null) { File.Delete(Path.Combine(Directory, reads[i].Id + ".json")); sent++; }
+                else SetAside(reads[i].Id);
+            }
+            if (ids.Count < MaxReadsPerSync) return (sent, UploadOutcome.Stored);
         }
-        return sent;
+    }
+
+    void SetAside(string id)
+    {
+        System.IO.Directory.CreateDirectory(RejectedDirectory);
+        File.Move(Path.Combine(Directory, id + ".json"), Path.Combine(RejectedDirectory, id + ".json"), overwrite: true);
     }
 }
 

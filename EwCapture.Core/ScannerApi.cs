@@ -22,6 +22,9 @@ public enum UploadOutcome
 
 public sealed class ScannerException(string message) : Exception(message);
 
+/// <summary>How a sync went, and per read in the body: null when stored, else why not.</summary>
+public sealed record SyncResult(UploadOutcome Outcome, IReadOnlyList<string?> ReadErrors);
+
 /// <summary>Client for the /api/scanner/* routes on the Exiled Wealth Worker.</summary>
 public sealed class ScannerApi(HttpClient http, string? token = null)
 {
@@ -69,12 +72,30 @@ public sealed class ScannerApi(HttpClient http, string? token = null)
         return await Send(req, "snapshot", ct);
     }
 
-    /// <summary>Tabs seen unchanged (see <see cref="SeenTracker"/>).</summary>
-    public async Task<UploadOutcome> SendSeenAsync(string seenJson, CancellationToken ct = default)
+    /// <summary>Every waiting read and seen note in one request (see <see cref="SnapshotQueue.SyncAsync"/>).</summary>
+    public async Task<SyncResult> SyncAsync(string bodyJson, CancellationToken ct = default)
     {
-        using var req = Authed(HttpMethod.Post, "api/scanner/seen");
-        req.Content = new StringContent(seenJson, System.Text.Encoding.UTF8, "application/json");
-        return await Send(req, "seen", ct);
+        using var req = Authed(HttpMethod.Post, "api/scanner/sync");
+        req.Content = new StringContent(bodyJson, System.Text.Encoding.UTF8, "application/json");
+        HttpResponseMessage res;
+        try { res = await http.SendAsync(req, ct); }
+        catch (HttpRequestException e) { Log?.Invoke($"sync failed to connect: {e.Message}"); return new(UploadOutcome.RetryLater, []); }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested) { Log?.Invoke("sync timed out"); return new(UploadOutcome.RetryLater, []); }
+        using (res)
+        {
+            var status = (int)res.StatusCode;
+            if (!res.IsSuccessStatusCode)
+            {
+                Log?.Invoke($"sync {status}: {await ErrorText(res, ct)}");
+                return new(status switch { 401 => UploadOutcome.Unlinked, 400 or 413 or 415 => UploadOutcome.Rejected, _ => UploadOutcome.RetryLater }, []);
+            }
+            var errors = new List<string?>();
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("reads", out var reads))
+                foreach (var r in reads.EnumerateArray()) errors.Add(r.TryGetProperty("error", out var e) ? e.GetString() ?? "refused" : null);
+            Log?.Invoke($"sync {status}: {errors.Count(e => e is null)} of {errors.Count} reads stored");
+            return new(UploadOutcome.Stored, errors);
+        }
     }
 
     /// <summary>
