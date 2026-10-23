@@ -17,8 +17,9 @@ sealed class App : ApplicationContext
     readonly NotifyIcon _tray;
     readonly HotkeyWindow _hotkey;
     static readonly string LogPath = Path.Combine(DataDir, "log.txt");
-    readonly UploadQueue _queue = new(Path.Combine(DataDir, "queue"));
-    readonly SnapshotQueue _snapshots = new(Path.Combine(DataDir, "snapshots"));
+    // Queues are per server: a read taken while pointed at dev must never reach the live site.
+    readonly UploadQueue _queue = new(Path.Combine(ServerDataDir, "queue"));
+    readonly SnapshotQueue _snapshots = new(Path.Combine(ServerDataDir, "snapshots"));
     static readonly string LayoutsPath = Path.Combine(DataDir, "layouts.json");
     readonly IconCache _icons;
     readonly AutoReader _auto;
@@ -50,6 +51,14 @@ sealed class App : ApplicationContext
 
     /// <summary>Diagnostic screenshots are a dev-only tool: the live site never takes them.</summary>
     static readonly bool Diagnostics = new Uri(LoadBaseUrl()).Host == "dev.exiledwealth.com";
+    /// <summary>The servers an install may point at: the live site and dev, nothing else, so no file can redirect uploads elsewhere.</summary>
+    static readonly string[] Servers = ["https://exiledwealth.com/", "https://dev.exiledwealth.com/"];
+    /// <summary>The server chosen from the tray menu; absent, appsettings.json decides.</summary>
+    static readonly string ServerPath = Path.Combine(DataDir, "server.txt");
+    /// <summary>Where this server's queues live. The live site keeps the original folders, so existing installs lose nothing.</summary>
+    static readonly string ServerDataDir = new Uri(LoadBaseUrl()).Host == "exiledwealth.com" ? DataDir : Path.Combine(DataDir, new Uri(LoadBaseUrl()).Host);
+    /// <summary>Set by a server switch: Program starts a fresh copy once this one has let go of its mutex.</summary>
+    public static bool RestartRequested { get; private set; }
 
     public App()
     {
@@ -92,6 +101,7 @@ sealed class App : ApplicationContext
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
             .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Retry rejected captures", null, async (_, _) => await RetryRejected()) } : []),
             new ToolStripSeparator(),
+            ServerMenu(),
             _versionItem,
             _updateItem,
             new ToolStripSeparator(),
@@ -138,9 +148,11 @@ sealed class App : ApplicationContext
         return "https://exiledwealth.com/";
     }
 
-    /// <summary>The server to use: appsettings.json's, if it's https, else the live site.</summary>
+    /// <summary>The server to use: the one chosen from the tray menu, else appsettings.json's if it's https, else the live site.</summary>
     static string LoadBaseUrl()
     {
+        try { if (File.ReadAllText(ServerPath).Trim() is { } chosen && Servers.Contains(chosen)) return chosen; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         var url = ConfiguredBaseUrl();
         // The device token and every update come from here: never over plain http.
         return Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? url : "https://exiledwealth.com/";
@@ -185,6 +197,30 @@ sealed class App : ApplicationContext
     {
         _updater.ApplyOnExit();
         ExitThread();
+    }
+
+    /// <summary>Server: the live site or dev. Each has its own token and queues; switching restarts the app.</summary>
+    ToolStripMenuItem ServerMenu()
+    {
+        var current = LoadBaseUrl();
+        var menu = new ToolStripMenuItem($"Server: {new Uri(current).Host}");
+        foreach (var url in Servers)
+        {
+            var item = new ToolStripMenuItem(new Uri(url).Host) { Checked = url == current };
+            item.Click += (_, _) => SwitchServer(url);
+            menu.DropDownItems.Add(item);
+        }
+        return menu;
+    }
+
+    void SwitchServer(string url)
+    {
+        if (!Servers.Contains(url) || url == LoadBaseUrl()) return;
+        Directory.CreateDirectory(DataDir);
+        File.WriteAllText(ServerPath, url);
+        Log($"server switched to {url}: restarting");
+        RestartRequested = true;
+        Quit();
     }
 
     void OnUi(Action a) { if (_ui is null) a(); else _ui.Post(_ => a(), null); }
