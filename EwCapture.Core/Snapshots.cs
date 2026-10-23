@@ -115,16 +115,16 @@ public sealed class SnapshotQueue(string dir)
     /// Everything waiting, in one request per 50 reads, with the seen notes on the first: the server
     /// answers each read on its own. A stored read is deleted, a refused one set aside to look at;
     /// on a failure that isn't the reads' fault they all wait for the next try. Returns how many
-    /// reads were stored, and how the last request went.
+    /// reads were stored, how the last request went, and how long the server asked us to wait.
     /// </summary>
-    public async Task<(int Sent, UploadOutcome Outcome)> SyncAsync(ScannerApi api, IReadOnlyList<SeenNote> seen, CancellationToken ct = default)
+    public async Task<(int Sent, UploadOutcome Outcome, TimeSpan? RetryAfter)> SyncAsync(ScannerApi api, IReadOnlyList<SeenNote> seen, CancellationToken ct = default)
     {
         int sent = 0;
         var notes = seen;
         while (true)
         {
             var ids = Pending().Take(MaxReadsPerSync).ToList();
-            if (ids.Count == 0 && notes.Count == 0) return (sent, UploadOutcome.Stored);
+            if (ids.Count == 0 && notes.Count == 0) return (sent, UploadOutcome.Stored, null);
             var reads = new List<(string Id, Snapshot Snap)>();
             foreach (var id in ids)
             {
@@ -140,14 +140,14 @@ public sealed class SnapshotQueue(string dir)
             var res = await api.SyncAsync(body, ct);
             notes = []; // sent, or lost: a note only tells a session the tab was checked
             if (res.Outcome == UploadOutcome.Rejected) { foreach (var r in reads) SetAside(r.Id); } // the whole body was refused
-            if (res.Outcome != UploadOutcome.Stored) return (sent, res.Outcome);
+            if (res.Outcome != UploadOutcome.Stored) return (sent, res.Outcome, res.RetryAfter);
             for (int i = 0; i < reads.Count; i++)
             {
                 var error = i < res.ReadErrors.Count ? res.ReadErrors[i] : "no answer";
                 if (error is null) { File.Delete(Path.Combine(Directory, reads[i].Id + ".json")); sent++; }
                 else SetAside(reads[i].Id);
             }
-            if (ids.Count < MaxReadsPerSync) return (sent, UploadOutcome.Stored);
+            if (ids.Count < MaxReadsPerSync) return (sent, UploadOutcome.Stored, null);
         }
     }
 

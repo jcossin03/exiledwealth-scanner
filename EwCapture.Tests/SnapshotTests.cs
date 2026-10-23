@@ -72,7 +72,7 @@ public class SnapshotTests
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"league":"L","reads":[{"tabId":1},{"tabId":2}],"seen":1}""") };
         })) { BaseAddress = new Uri("https://dev.example/") };
 
-        var (sent, outcome) = await q.SyncAsync(new ScannerApi(http, "ewd_test"), [new SeenNote("Currency", "C", 0, T0)]);
+        var (sent, outcome, _) = await q.SyncAsync(new ScannerApi(http, "ewd_test"), [new SeenNote("Currency", "C", 0, T0)]);
 
         Assert.Equal((2, UploadOutcome.Stored), (sent, outcome));
         var (path, body) = Assert.Single(requests);
@@ -101,13 +101,36 @@ public class SnapshotTests
         var http = new HttpClient(new Handler(_ => Task.FromResult(responses.Dequeue()))) { BaseAddress = new Uri("https://dev.example/") };
         var api = new ScannerApi(http, "ewd_test");
 
-        Assert.Equal((1, UploadOutcome.Stored), await q.SyncAsync(api, []));
+        Assert.Equal((1, UploadOutcome.Stored, (TimeSpan?)null), await q.SyncAsync(api, []));
         Assert.Empty(q.Pending()); // A stored, B set aside
         Assert.Single(Directory.GetFiles(q.RejectedDirectory));
 
         q.Enqueue(a with { Tab = a.Tab with { Name = "C" } });
-        Assert.Equal((0, UploadOutcome.RetryLater), await q.SyncAsync(api, []));
+        Assert.Equal((0, UploadOutcome.RetryLater, (TimeSpan?)null), await q.SyncAsync(api, []));
         Assert.Single(q.Pending()); // C waits for the server to come back
+    }
+
+    [Fact]
+    public async Task SyncPassesTheServersRetryAfterUpAndReportsA401AsUnlinkedWithoutAskingAgain()
+    {
+        var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
+        q.Enqueue(Snapshot.From(Read((10, "Divine Orb", 1)), "A", "t", "p", T0));
+        var limited = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent("""{"error":"capacity"}""") };
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(120));
+        var responses = new Queue<HttpResponseMessage>([
+            limited,
+            new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("down") },
+            new(HttpStatusCode.Unauthorized) { Content = new StringContent("""{"error":"scanner not linked"}""") },
+        ]);
+        int calls = 0;
+        var http = new HttpClient(new Handler(_ => { calls++; return Task.FromResult(responses.Dequeue()); })) { BaseAddress = new Uri("https://dev.example/") };
+        var api = new ScannerApi(http, "ewd_test");
+
+        Assert.Equal((0, UploadOutcome.RetryLater, (TimeSpan?)TimeSpan.FromSeconds(120)), await q.SyncAsync(api, []));
+        Assert.Equal((0, UploadOutcome.RetryLater, (TimeSpan?)null), await q.SyncAsync(api, [])); // no header: the caller picks the wait
+        Assert.Equal((0, UploadOutcome.Unlinked, (TimeSpan?)null), await q.SyncAsync(api, []));
+        Assert.Equal(3, calls); // one request per sync: the 401 is the answer, no whoami to confirm it
+        Assert.Single(q.Pending()); // the read is kept through all three
     }
 
     sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> f) : HttpMessageHandler

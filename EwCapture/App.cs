@@ -35,7 +35,11 @@ sealed class App : ApplicationContext
     string? _layoutsVersion;
     SynchronizationContext? _ui;
     readonly ScannerApi _api;
-    readonly System.Windows.Forms.Timer _retry = new() { Interval = 30_000 };
+    // Retries start at 30 s. While the server can't take uploads they stretch toward five minutes, or to
+    // what Retry-After asks: an outage must not be met by every scanner knocking twice a minute.
+    static readonly TimeSpan RetryMin = TimeSpan.FromSeconds(30), RetryMax = TimeSpan.FromMinutes(5);
+    readonly System.Windows.Forms.Timer _retry = new() { Interval = (int)RetryMin.TotalMilliseconds };
+    DateTime _nextAttempt = DateTime.MinValue;
     // A new read waits this long for more: flipping through ten tabs is one request, not ten.
     readonly System.Windows.Forms.Timer _debounce = new() { Interval = 3_000 };
     readonly ToolStripMenuItem _accountItem = new() { Enabled = false };
@@ -303,7 +307,7 @@ sealed class App : ApplicationContext
 
     async Task Drain()
     {
-        if (_draining || _api.Token is null) return;
+        if (_draining || _api.Token is null || DateTime.UtcNow < _nextAttempt) return;
         _draining = true;
         try
         {
@@ -311,9 +315,12 @@ sealed class App : ApplicationContext
             var notes = _auto.Seen.TakeNotes();
             int pending = _queue.Pending().Count, reads = _snapshots.Pending().Count;
             if (pending + reads + notes.Count == 0) return;
+            var outcome = UploadOutcome.Stored;
+            TimeSpan? retryAfter = null;
             if (reads + notes.Count > 0)
             {
-                var (sentReads, outcome) = await _snapshots.SyncAsync(_api, notes);
+                int sentReads;
+                (sentReads, outcome, retryAfter) = await _snapshots.SyncAsync(_api, notes);
                 Log($"sync: {sentReads} of {reads} reads stored, {notes.Count} seen notes, {_snapshots.Pending().Count} still waiting ({outcome})");
             }
             if (pending > 0 && Diagnostics)
@@ -321,8 +328,12 @@ sealed class App : ApplicationContext
                 var sent = await _queue.DrainAsync(_api);
                 Log($"drain: {sent} of {pending} uploaded, {_queue.Pending().Count} still waiting");
             }
-            // A 401 leaves the queues intact; check whether that's what stopped them.
-            if (_queue.Pending().Count + _snapshots.Pending().Count > 0 && await _api.WhoAmIAsync() is null) Unlinked();
+            switch (outcome)
+            {
+                case UploadOutcome.Unlinked: Unlinked(); break; // the 401 said so; no second request to ask
+                case UploadOutcome.RetryLater: Backoff(retryAfter); break;
+                default: _retry.Interval = (int)RetryMin.TotalMilliseconds; _nextAttempt = DateTime.MinValue; break;
+            }
         }
         // Anything escaping here would take down the tray app; log it and try again next tick.
         catch (Exception e) { Log($"drain failed: {e}"); }
@@ -364,6 +375,20 @@ sealed class App : ApplicationContext
         {
             MessageBox.Show($"Couldn't link: {e.Message}", "Exiled Wealth", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    /// <summary>
+    /// The next try waits for Retry-After when the server gave one, else twice as long as last time, up to
+    /// five minutes. A wait past five minutes (the day's budget is spent) keeps the timer at five minutes and
+    /// lets <see cref="Drain"/> return early until it has passed.
+    /// </summary>
+    void Backoff(TimeSpan? retryAfter)
+    {
+        var wait = retryAfter ?? TimeSpan.FromMilliseconds(Math.Min(_retry.Interval * 2, RetryMax.TotalMilliseconds));
+        if (wait < RetryMin) wait = RetryMin;
+        _retry.Interval = (int)Math.Min(wait.TotalMilliseconds, RetryMax.TotalMilliseconds);
+        _nextAttempt = DateTime.UtcNow + wait;
+        Log($"server can't take uploads right now: next try in {(int)wait.TotalSeconds} s");
     }
 
     void Unlinked()

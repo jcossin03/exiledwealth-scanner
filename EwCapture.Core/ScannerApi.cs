@@ -22,8 +22,11 @@ public enum UploadOutcome
 
 public sealed class ScannerException(string message) : Exception(message);
 
-/// <summary>How a sync went, and per read in the body: null when stored, else why not.</summary>
-public sealed record SyncResult(UploadOutcome Outcome, IReadOnlyList<string?> ReadErrors);
+/// <summary>
+/// How a sync went, and per read in the body: null when stored, else why not. On a 429 or 503 the
+/// server may say how long to wait (Retry-After); the caller holds off at least that long.
+/// </summary>
+public sealed record SyncResult(UploadOutcome Outcome, IReadOnlyList<string?> ReadErrors, TimeSpan? RetryAfter = null);
 
 /// <summary>Client for the /api/scanner/* routes on the Exiled Wealth Worker.</summary>
 public sealed class ScannerApi(HttpClient http, string? token = null)
@@ -87,7 +90,8 @@ public sealed class ScannerApi(HttpClient http, string? token = null)
             if (!res.IsSuccessStatusCode)
             {
                 Log?.Invoke($"sync {status}: {await ErrorText(res, ct)}");
-                return new(status switch { 401 => UploadOutcome.Unlinked, 400 or 413 or 415 => UploadOutcome.Rejected, _ => UploadOutcome.RetryLater }, []);
+                var outcome = status switch { 401 => UploadOutcome.Unlinked, 400 or 413 or 415 => UploadOutcome.Rejected, _ => UploadOutcome.RetryLater };
+                return new(outcome, [], outcome == UploadOutcome.RetryLater ? RetryAfter(res) : null);
             }
             var errors = new List<string?>();
             using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
@@ -159,6 +163,15 @@ public sealed class ScannerApi(HttpClient http, string? token = null)
         var req = new HttpRequestMessage(method, path);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
         return req;
+    }
+
+    /// <summary>The Retry-After header as a wait, whether it came as seconds or as a date; null when absent or malformed.</summary>
+    internal static TimeSpan? RetryAfter(HttpResponseMessage res)
+    {
+        var h = res.Headers.RetryAfter;
+        if (h?.Delta is { } delta) return delta;
+        if (h?.Date is { } date) return date - DateTimeOffset.UtcNow;
+        return null;
     }
 
     static async Task<string> ErrorText(HttpResponseMessage res, CancellationToken ct)
