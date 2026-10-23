@@ -61,12 +61,14 @@ sealed class App : ApplicationContext
     string _lastUpload = "none yet";
     bool _draining;
 
-    /// <summary>Diagnostic screenshots are a dev-only tool: the live site never takes them.</summary>
-    static readonly bool Diagnostics = new Uri(LoadBaseUrl()).Host == "dev.exiledwealth.com";
+    // Static initializers run in textual order: everything LoadBaseUrl() reads must be declared above its
+    // first caller (Diagnostics, below). 0.4.7 to 0.4.10 had these after it and died on launch.
     /// <summary>The servers an install may point at: the live site and dev, nothing else, so no file can redirect uploads elsewhere.</summary>
     static readonly string[] Servers = ["https://exiledwealth.com/", "https://dev.exiledwealth.com/"];
     /// <summary>The server chosen from the tray menu; absent, appsettings.json decides.</summary>
     static readonly string ServerPath = Path.Combine(DataDir, "server.txt");
+    /// <summary>Diagnostic screenshots are a dev-only tool: the live site never takes them.</summary>
+    static readonly bool Diagnostics = new Uri(LoadBaseUrl()).Host == "dev.exiledwealth.com";
     /// <summary>Where this server's queues live. The live site keeps the original folders, so existing installs lose nothing.</summary>
     static readonly string ServerDataDir = new Uri(LoadBaseUrl()).Host == "exiledwealth.com" ? DataDir : Path.Combine(DataDir, new Uri(LoadBaseUrl()).Host);
     /// <summary>Set by a server switch: Program starts a fresh copy once this one has let go of its mutex.</summary>
@@ -172,7 +174,7 @@ sealed class App : ApplicationContext
     static string LoadBaseUrl()
     {
         try { if (File.ReadAllText(ServerPath).Trim() is { } chosen && Servers.Contains(chosen)) return chosen; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NullReferenceException) { }
         var url = ConfiguredBaseUrl();
         // The device token and every update come from here: never over plain http.
         return Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? url : "https://exiledwealth.com/";
