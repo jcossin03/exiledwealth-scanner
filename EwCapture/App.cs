@@ -44,8 +44,12 @@ sealed class App : ApplicationContext
     static readonly TimeSpan RetryMin = TimeSpan.FromSeconds(30), RetryMax = TimeSpan.FromMinutes(5);
     readonly System.Windows.Forms.Timer _retry = new() { Interval = (int)RetryMin.TotalMilliseconds };
     DateTime _nextAttempt = DateTime.MinValue;
-    // A new read waits this long for more: flipping through ten tabs is one request, not ten.
-    readonly System.Windows.Forms.Timer _debounce = new() { Interval = 3_000 };
+    // Reads are sent in batches: a new read waits for the stash to go quiet, so sorting loot across
+    // ten tabs is one request, not ten. A long session still reports every BatchMax at the latest.
+    // The hotkey sends at once.
+    static readonly TimeSpan BatchQuiet = TimeSpan.FromSeconds(30), BatchMax = TimeSpan.FromMinutes(2);
+    readonly System.Windows.Forms.Timer _debounce = new() { Interval = (int)BatchQuiet.TotalMilliseconds };
+    DateTime _batchSince = DateTime.MinValue;
     readonly ToolStripMenuItem _accountItem = new() { Enabled = false };
     readonly ToolStripMenuItem _queueItem = new() { Enabled = false };
     readonly ToolStripMenuItem _lastItem = new() { Enabled = false };
@@ -89,7 +93,7 @@ sealed class App : ApplicationContext
         };
         _auto = new AutoReader(_snapshots, _icons, Log,
             status => OnUi(() => { _lastRead = status; RefreshMenu(); }),
-            () => OnUi(() => { _debounce.Stop(); _debounce.Start(); }));
+            () => OnUi(Queued));
         _autoItem.CheckedChanged += (_, _) => { _auto.Enabled = _autoItem.Checked; Log($"auto read {(_autoItem.Checked ? "on" : "off")}"); };
         _autoUpdateItem.CheckedChanged += (_, _) =>
         {
@@ -141,7 +145,7 @@ sealed class App : ApplicationContext
             Notify($"{HotkeyText} is taken by another program. Use the tray menu's Read now instead.", ToolTipIcon.Warning);
 
         _retry.Tick += async (_, _) => await Drain();
-        _debounce.Tick += async (_, _) => { _debounce.Stop(); await Drain(); };
+        _debounce.Tick += async (_, _) => await Flush();
         _retry.Start();
         _layoutRefresh.Tick += async (_, _) => await LoadLayouts();
         _layoutRefresh.Start();
@@ -258,14 +262,38 @@ sealed class App : ApplicationContext
     /// <summary>The hotkey: read the open tab now, and on dev also send a screenshot for diagnosis.</summary>
     void ReadNow()
     {
-        _ = _auto.ReadNowAsync();
+        _ = ThenFlush(_auto.ReadNowAsync());
         if (_api.Token is not null && Diagnostics) CaptureNow();
     }
 
     void ReadNowFromMenu()
     {
         Notify("Switch to the game: it reads as soon as Path of Exile 2 is in front (within 10 s).", ToolTipIcon.Info);
-        _ = _auto.ReadWhenGameInFrontAsync(TimeSpan.FromSeconds(10));
+        _ = ThenFlush(_auto.ReadWhenGameInFrontAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    /// <summary>A read the player asked for goes up as soon as it's taken, batch or no batch.</summary>
+    async Task ThenFlush(Task read)
+    {
+        try { await read; } catch (Exception e) { Log($"read now failed: {e}"); }
+        OnUi(() => _ = Flush());
+    }
+
+    /// <summary>A read was queued: wait for the stash to go quiet, unless this batch has waited long enough already.</summary>
+    void Queued()
+    {
+        var now = DateTime.UtcNow;
+        if (_batchSince == DateTime.MinValue) _batchSince = now;
+        if (now - _batchSince >= BatchMax) { _ = Flush(); return; }
+        _debounce.Stop();
+        _debounce.Start();
+    }
+
+    async Task Flush()
+    {
+        _debounce.Stop();
+        _batchSince = DateTime.MinValue;
+        await Drain();
     }
 
     void LoadCachedLayouts()
