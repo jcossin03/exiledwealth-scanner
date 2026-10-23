@@ -28,6 +28,10 @@ sealed class App : ApplicationContext
     readonly ToolStripMenuItem _readItem = new() { Enabled = false };
     readonly ToolStripMenuItem _versionItem = new() { Enabled = false };
     readonly ToolStripMenuItem _updateItem = new();
+    // Opt-in: install a downloaded update by restarting on its own, but only while the game isn't running.
+    // Off by default; nobody gets restarted without having asked for it. Remembered as a marker file.
+    static readonly string AutoUpdatePath = Path.Combine(DataDir, "auto-update.txt");
+    readonly ToolStripMenuItem _autoUpdateItem = new("Install updates automatically (when the game is closed)") { CheckOnClick = true, Checked = File.Exists(AutoUpdatePath) };
     readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 6 * 3_600_000 };
     readonly Updater _updater;
     string _updateStatus = "not checked yet";
@@ -87,6 +91,13 @@ sealed class App : ApplicationContext
             status => OnUi(() => { _lastRead = status; RefreshMenu(); }),
             () => OnUi(() => { _debounce.Stop(); _debounce.Start(); }));
         _autoItem.CheckedChanged += (_, _) => { _auto.Enabled = _autoItem.Checked; Log($"auto read {(_autoItem.Checked ? "on" : "off")}"); };
+        _autoUpdateItem.CheckedChanged += (_, _) =>
+        {
+            try { if (_autoUpdateItem.Checked) File.WriteAllText(AutoUpdatePath, "on"); else File.Delete(AutoUpdatePath); }
+            catch (IOException e) { Log($"couldn't remember the auto-update setting: {e.Message}"); }
+            Log($"auto update {(_autoUpdateItem.Checked ? "on" : "off")}");
+            if (_autoUpdateItem.Checked) ApplyUpdateIfIdle();
+        };
 
         _labelItem.Click += (_, _) => AskLabel();
         _linkItem.Click += async (_, _) => await LinkOrUnlink();
@@ -108,6 +119,7 @@ sealed class App : ApplicationContext
             ServerMenu(),
             _versionItem,
             _updateItem,
+            _autoUpdateItem,
             new ToolStripSeparator(),
             _linkItem,
             new ToolStripMenuItem("Quit", null, (_, _) => Quit()),
@@ -194,6 +206,20 @@ sealed class App : ApplicationContext
         RefreshMenu();
         _updateStatus = await _updater.CheckAsync();
         RefreshMenu();
+        if (_autoUpdateItem.Checked) ApplyUpdateIfIdle();
+    }
+
+    /// <summary>
+    /// With the opt-in on and an update downloaded: restart into it now, unless the game is running or an
+    /// upload is mid-flight. Queued reads are files on disk and survive the restart.
+    /// </summary>
+    void ApplyUpdateIfIdle()
+    {
+        if (_updater.ReadyVersion is not { } v) return;
+        if (GameWindow.GameRunning()) { Log($"update {v} ready; waiting for the game to close"); return; }
+        if (_draining) { Log($"update {v} ready; waiting for the upload to finish"); return; }
+        Log($"installing {v} automatically (opted in, game closed)");
+        _updater.RestartToApply();
     }
 
     /// <summary>Quit, installing a downloaded update on the way out.</summary>

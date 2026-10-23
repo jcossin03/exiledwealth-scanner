@@ -38,6 +38,10 @@ static class GameWindow
     static readonly TimeSpan Recheck = TimeSpan.FromSeconds(15);
 
     /// <summary>The game window, or null with a reason the user can act on.</summary>
+    /// <summary>True while a Path of Exile process is up, minimised or not: the updater never restarts then.</summary>
+    public static bool GameRunning() =>
+        Process.GetProcesses().Any(p => p.ProcessName.StartsWith("PathOfExile", StringComparison.OrdinalIgnoreCase));
+
     public static (Window? Window, string? Problem) Find(bool onlyIfInFront)
     {
         if (_cached.Handle == IntPtr.Zero || !Native.IsWindow(_cached.Handle) || DateTime.UtcNow - _cached.At > Recheck)
