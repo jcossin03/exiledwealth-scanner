@@ -81,7 +81,8 @@ public class SnapshotTests
         Assert.Equal(["B", "A"], reads.Select(r => r.GetProperty("name").GetString()));
         Assert.Equal("Currency", reads[1].GetProperty("layout").GetString());
         Assert.Equal(T0.AddMinutes(1), reads[1].GetProperty("at").GetDateTimeOffset());
-        Assert.Equal("[[10,5]]", reads[1].GetProperty("counts").GetRawText().Replace(" ", "").Replace("\n", "")); // counts only: no item, no confidence
+        // Re-serialized, not the raw text: the body is indented, with \r\n on Windows.
+        Assert.Equal("[[10,5]]", JsonSerializer.Serialize(reads[1].GetProperty("counts"))); // counts only: no item, no confidence
         Assert.False(reads[1].TryGetProperty("item", out _));
         Assert.Equal("C", Assert.Single(body.GetProperty("seen").EnumerateArray()).GetProperty("name").GetString());
         Assert.Empty(q.Pending());
