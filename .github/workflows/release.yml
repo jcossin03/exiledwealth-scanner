@@ -3,7 +3,9 @@
 # (in the private site repo) downloads this zip, checks the attestation, then packs
 # it with Velopack and signs the update feed: the exe players get is this build.
 # Our own files carry the attestation too, so an installed copy can be checked directly. Run by hand (workflow_dispatch) it is a dry run: the same
-# build and attestations, kept as a workflow artifact, no release.
+# build, attestations and launch check, kept as a workflow artifact, no release.
+# No release without a launch: the built zip is started on Windows first (smoke), so a build that
+# dies on start (0.4.7 to 0.4.10) never reaches the release script or a player.
 name: Release build
 
 on:
@@ -11,15 +13,18 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write      # the GitHub release
-  id-token: write      # the attestation's signing identity
-  attestations: write
+permissions: {}
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write      # the attestation's signing identity
+      attestations: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,12 +34,14 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Tag matches the app version
+        id: version
         run: |
           v="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' EwCapture/EwCapture.csproj)"
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but <Version> $v"; exit 1; }
           fi
           echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - run: >
           dotnet test EwCapture.Tests
@@ -59,17 +66,51 @@ jobs:
             publish/ew-capture.dll
             publish/EwCapture.Core.dll
 
-      - if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dry-run-${{ env.VERSION }}
+          name: ew-capture-${{ env.VERSION }}-win-x64
           path: ew-capture-${{ env.VERSION }}-win-x64.zip
+
+  smoke:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ew-capture-${{ env.VERSION }}-win-x64
+      # The exact zip the release will carry, unpacked the way an install holds it.
+      - run: |
+          Expand-Archive "ew-capture-$env:VERSION-win-x64.zip" app
+          .github/smoke.ps1 -AppDir app
+        shell: pwsh
+
+  release:
+    needs: [build, smoke]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write      # the GitHub release
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ew-capture-${{ env.VERSION }}-win-x64
 
       # The notes are the tag's message (git tag -a, from the site's changelog entry).
       - name: GitHub release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           obj="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq 'select(.object.type == "tag") | .object.sha')"
           [ -n "$obj" ] || { echo "v$VERSION is not an annotated tag: its message is the release notes"; exit 1; }

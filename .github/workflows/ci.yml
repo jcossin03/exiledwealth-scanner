@@ -24,3 +24,18 @@ jobs:
       - run: >
           dotnet test EwCapture.Tests
           --filter "FullyQualifiedName!~RecognitionTests&FullyQualifiedName!~TabStripTests&FullyQualifiedName!~StashGateTests&FullyQualifiedName!~StripCoverTests"
+
+  # The tests never load App: only starting the exe catches a crash on launch (0.4.7 to 0.4.10).
+  launch:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet publish EwCapture -c Release -r win-x64 -p:PublishSingleFile=false -o publish
+      - run: .github/smoke.ps1 -AppDir publish
+        shell: pwsh
