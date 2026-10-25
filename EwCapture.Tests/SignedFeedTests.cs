@@ -11,22 +11,10 @@ public class SignedFeedTests
     static readonly string Pub = Key.ExportSubjectPublicKeyInfoPem();
     static readonly byte[] Feed = Encoding.UTF8.GetBytes("""{"Assets":[{"FileName":"x-1.0.0-full.nupkg","SHA256":"ab"}]}""");
 
+    static byte[] Envelope(byte[] feed, byte[] sig) => JsonSerializer.SerializeToUtf8Bytes(
+        new Dictionary<string, string> { ["feed"] = Convert.ToBase64String(feed), ["sig"] = Convert.ToBase64String(sig) });
+
     static byte[] Sign(byte[] data, ECDsa key) => key.SignData(data, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
-
-    static byte[] FreshMsg(long at, byte[] feed) => Encoding.UTF8.GetBytes(at.ToString()).Concat(feed).ToArray();
-
-    // The release script's envelope: feed + sig, plus a signedAt bound to the feed by freshSig.
-    static byte[] Envelope(byte[] feed, byte[] sig, long? signedAt = null, byte[]? freshSig = null)
-    {
-        var at = signedAt ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var fresh = freshSig ?? Sign(FreshMsg(at, feed), Key);
-        return JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, string> {
-            ["feed"] = Convert.ToBase64String(feed),
-            ["sig"] = Convert.ToBase64String(sig),
-            ["signedAt"] = at.ToString(),
-            ["freshSig"] = Convert.ToBase64String(fresh),
-        });
-    }
 
     [Fact]
     public void ShipsWithTheUpdateKey()
@@ -57,44 +45,15 @@ public class SignedFeedTests
     }
 
     [Fact]
-    public void RefusesAFeedWithoutFreshness()
+    public void OpensAnOldFeedWithTheFreshnessFields()
     {
-        // A pre-freshness envelope (feed + sig only) is how a replay would arrive: refuse it.
-        var legacy = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, string> {
-            ["feed"] = Convert.ToBase64String(Feed), ["sig"] = Convert.ToBase64String(Sign(Feed, Key)) });
-        Assert.Throws<CryptographicException>(() => SignedFeed.Open(legacy, Pub));
-    }
-
-    [Fact]
-    public void RefusesAStaleFeed()
-    {
-        var old = DateTimeOffset.UtcNow.AddDays(-200).ToUnixTimeSeconds();
-        Assert.Throws<CryptographicException>(() => SignedFeed.Open(Envelope(Feed, Sign(Feed, Key), old), Pub));
-    }
-
-    [Fact]
-    public void RefusesAFeedSignedInTheFuture()
-    {
-        var ahead = DateTimeOffset.UtcNow.AddDays(10).ToUnixTimeSeconds();
-        Assert.Throws<CryptographicException>(() => SignedFeed.Open(Envelope(Feed, Sign(Feed, Key), ahead), Pub));
-    }
-
-    [Fact]
-    public void RefusesAReStampedTimestamp()
-    {
-        // An attacker with an old, validly-signed feed changes signedAt to "now" but can't
-        // re-sign freshSig (no private key), so the freshness signature no longer matches.
-        var old = DateTimeOffset.UtcNow.AddDays(-200).ToUnixTimeSeconds();
-        var nowClaim = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var staleFresh = Sign(FreshMsg(old, Feed), Key); // signed for the real (old) time
-        Assert.Throws<CryptographicException>(() => SignedFeed.Open(Envelope(Feed, Sign(Feed, Key), nowClaim, staleFresh), Pub));
-    }
-
-    [Fact]
-    public void AcceptsAFeedWithinTheFreshnessWindow()
-    {
-        var recent = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeSeconds();
-        Assert.Equal(Feed, SignedFeed.Open(Envelope(Feed, Sign(Feed, Key), recent), Pub));
+        // The release script adds signedAt + freshSig (for 0.4.12): ignored, and a feed
+        // signed long ago still opens, so a quiet spell between releases never fails a check.
+        var old = DateTimeOffset.UtcNow.AddDays(-400).ToUnixTimeSeconds().ToString();
+        var envelope = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, string> {
+            ["feed"] = Convert.ToBase64String(Feed), ["sig"] = Convert.ToBase64String(Sign(Feed, Key)),
+            ["signedAt"] = old, ["freshSig"] = Convert.ToBase64String(Sign(Feed, Key)) });
+        Assert.Equal(Feed, SignedFeed.Open(envelope, Pub));
     }
 
     [Theory]
