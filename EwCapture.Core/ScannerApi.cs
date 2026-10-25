@@ -67,14 +67,6 @@ public sealed class ScannerApi(HttpClient http, string? token = null)
         return await Send(req, $"{png.Length:N0} bytes", ct);
     }
 
-    /// <summary>One tab's read (counts only, never pixels).</summary>
-    public async Task<UploadOutcome> UploadSnapshotAsync(string snapshotJson, CancellationToken ct = default)
-    {
-        using var req = Authed(HttpMethod.Post, "api/scanner/snapshots");
-        req.Content = new StringContent(snapshotJson, System.Text.Encoding.UTF8, "application/json");
-        return await Send(req, "snapshot", ct);
-    }
-
     /// <summary>Every waiting read and seen note in one request (see <see cref="SnapshotQueue.SyncAsync"/>).</summary>
     public async Task<SyncResult> SyncAsync(string bodyJson, CancellationToken ct = default)
     {

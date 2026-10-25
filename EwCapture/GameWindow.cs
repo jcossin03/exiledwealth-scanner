@@ -37,11 +37,11 @@ static class GameWindow
     static (IntPtr Handle, string Process, DateTime At) _cached;
     static readonly TimeSpan Recheck = TimeSpan.FromSeconds(15);
 
-    /// <summary>The game window, or null with a reason the user can act on.</summary>
     /// <summary>True while a Path of Exile process is up, minimised or not: the updater never restarts then.</summary>
     public static bool GameRunning() =>
         Process.GetProcesses().Any(p => p.ProcessName.StartsWith("PathOfExile", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The game window, or null with a reason the user can act on.</summary>
     public static (Window? Window, string? Problem) Find(bool onlyIfInFront)
     {
         if (_cached.Handle == IntPtr.Zero || !Native.IsWindow(_cached.Handle) || DateTime.UtcNow - _cached.At > Recheck)
@@ -94,11 +94,17 @@ static class GameWindow
         return new Capture(frame, new Size2(w.Width, w.Height), monitor, w.Process, mode);
     }
 
-    /// <summary>The diagnostic screenshot path: the whole client area, or a reason.</summary>
+    /// <summary>
+    /// The diagnostic screenshot path: the whole client area, or a reason. A screen copy holds whatever
+    /// covers the game, so only ever with the game in front, before and after the copy: anything else
+    /// (a browser, a password manager) must never be uploaded.
+    /// </summary>
     public static (Capture? Capture, string? Problem) Grab()
     {
-        var (w, problem) = Find(onlyIfInFront: false);
-        return w is null ? (null, problem) : (Grab(w, panelOnly: false), null);
+        var (w, problem) = Find(onlyIfInFront: true);
+        if (w is null) return (null, problem);
+        var capture = Grab(w, panelOnly: false);
+        return Native.GetForegroundWindow() == w.Handle ? (capture, null) : (null, "The game left the front during the capture.");
     }
 
     static Frame Copy(Window w, int x, int y, int width, int height)

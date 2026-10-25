@@ -20,10 +20,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- A plain folder, not one single-file exe: Velopack's delta updates stay small. Set here, not on
+         the command line, so build and publish restore the same packages (packages.lock.json). -->
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,7 +31,7 @@
   <ItemGroup>
     <PackageReference Include="Velopack" Version="1.2.161" />
     <ProjectReference Include="..\EwCapture.Core\EwCapture.Core.csproj" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.13" />
   </ItemGroup>
   <ItemGroup>
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />

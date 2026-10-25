@@ -29,11 +29,13 @@ from GGG's image server (`web.poecdn.com`).
 | When | Request | Contents |
 |---|---|---|
 | Once, when you link | `POST /api/scanner/link` | the code from the website, and this PC's name (so you can tell your PCs apart on the website) |
-| A tab changed, or every 6 h | `POST /api/scanner/snapshots` | time, app version, game patch, the tab's type, name and match score, and per slot: item name, count, read confidence ([`Snapshots.cs`](EwCapture.Core/Snapshots.cs)) |
-| You opened a tab that didn't change (at most every 2 min per tab) | `POST /api/scanner/seen` | the tab's type, name and when |
+| Reads waiting (once the stash has been quiet for 30 s, at least every 2 min while you sort, at once for Read now) | `POST /api/scanner/sync` | for each tab whose counts changed: its type, name, position and when it was read, and per slot a slot number and a count (the slot says what item it holds); for each tab you opened that didn't change (at most every 5 min per tab): its type, name, position and when ([`Snapshots.cs`](EwCapture.Core/Snapshots.cs)) |
 | At start and hourly | `GET /api/scanner/layouts` | nothing: downloads the tab layouts |
 | At start and after errors | `GET /api/scanner/whoami` | nothing: checks the link still works |
 | At start and every 6 h | `GET /api/scanner/releases/…` | nothing: checks for updates |
+| Only on the dev server (below), when you ask | `POST /api/scanner/captures` | a screenshot of the game window and its metadata |
+
+Every request carries the app's version in its `User-Agent`.
 
 ## What it never does
 
@@ -41,11 +43,14 @@ from GGG's image server (`web.poecdn.com`).
 - **No game memory, files or traffic.** It doesn't open the game's process, read its
   memory or its network traffic, or read its files.
 - **No screenshots leave your PC.** The one exception is a diagnostics mode we use in
-  development: it can upload whole-window screenshots, with the display and UI
-  sections of the game's settings file, to help fix misreads. It only exists when the
-  scanner is pointed at our dev server (`dev.exiledwealth.com`, set in
-  `appsettings.json` next to the exe); on the live site it's off, its menu items are
-  hidden, and any queued screenshots are deleted at start.
+  development: Ctrl+Shift+F12 and "Send diagnostic screenshot" upload a screenshot of
+  the game window, with the display and UI sections of the game's settings file, to
+  help fix misreads. Only the game, only while it's in front: if another window is in
+  front, nothing is taken. The mode only exists while the scanner is pointed at our
+  test server, `dev.exiledwealth.com` (tray menu → Server, which asks first and says
+  this; `appsettings.json` next to the exe can only name the live site or that one).
+  On the live site it's off, its menu items are hidden, and any queued screenshots are
+  deleted at start.
 - **No account details.** You link it with a code from the website.
 
 ## What it keeps on your PC
