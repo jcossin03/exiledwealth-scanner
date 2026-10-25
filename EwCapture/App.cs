@@ -116,7 +116,7 @@ sealed class App : ApplicationContext
             new ToolStripSeparator(),
             _autoItem,
             new ToolStripMenuItem($"Read now ({HotkeyText})", null, (_, _) => ReadNowFromMenu()),
-            .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Send diagnostic screenshot", null, (_, _) => CaptureNow()) } : []),
+            .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Send diagnostic screenshot", null, async (_, _) => await CaptureFromMenu()) } : []),
             // Screenshot tools exist only on dev (see Diagnostics).
             .. (Diagnostics ? new ToolStripItem[] { _labelItem, new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()) } : []),
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
@@ -170,14 +170,21 @@ sealed class App : ApplicationContext
         return "https://exiledwealth.com/";
     }
 
-    /// <summary>The server to use: the one chosen from the tray menu, else appsettings.json's if it's https, else the live site.</summary>
+    // No initializer, so declaration order doesn't matter: false until the first warning.
+    static bool _warnedConfig;
+
+    /// <summary>
+    /// The server to use: the one chosen from the tray menu, else appsettings.json's, else the live site.
+    /// Both must be one of <see cref="Servers"/>: the device token and every update come from here.
+    /// </summary>
     static string LoadBaseUrl()
     {
         try { if (File.ReadAllText(ServerPath).Trim() is { } chosen && Servers.Contains(chosen)) return chosen; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NullReferenceException) { }
         var url = ConfiguredBaseUrl();
-        // The device token and every update come from here: never over plain http.
-        return Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? url : "https://exiledwealth.com/";
+        if (Servers.Contains(url)) return url;
+        if (!_warnedConfig) { _warnedConfig = true; Log($"appsettings.json names {url}, which isn't one of ours: using {Servers[0]}"); }
+        return Servers[0];
     }
 
     async Task Startup()
@@ -252,6 +259,14 @@ sealed class App : ApplicationContext
     void SwitchServer(string url)
     {
         if (!Servers.Contains(url) || url == LoadBaseUrl()) return;
+        // Dev turns on diagnostics (screenshot uploads): nobody ends up there by curiosity without being told.
+        if (new Uri(url).Host == "dev.exiledwealth.com" && MessageBox.Show(
+                "dev.exiledwealth.com is the developer's test server, not the live site. It has its own login, and your stash there starts empty.\n\n"
+                + $"While this PC is linked to it, {HotkeyText} and \"Send diagnostic screenshot\" also upload a screenshot of the game window, "
+                + "with the display and UI sections of the game's settings file, to help fix misreads.\n\n"
+                + "Switch to the test server?",
+                "Exiled Wealth", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
         Directory.CreateDirectory(DataDir);
         File.WriteAllText(ServerPath, url);
         Log($"server switched to {url}: restarting");
@@ -334,6 +349,16 @@ sealed class App : ApplicationContext
         _ = Task.Run(() => _icons.PrefetchAsync(icons));
     }
 
+    /// <summary>From the tray the game is behind the menu: wait for it to come to the front, as Read now does.</summary>
+    async Task CaptureFromMenu()
+    {
+        Notify("Switch to the game: the screenshot is taken as soon as Path of Exile 2 is in front (within 10 s).", ToolTipIcon.Info);
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (GameWindow.Find(onlyIfInFront: true).Window is null && DateTime.UtcNow < until) await Task.Delay(250);
+        CaptureNow(); // still not in front: skipped, with the reason logged
+    }
+
+    /// <summary>A diagnostic screenshot of the game, only while it's in front (see <see cref="GameWindow.Grab()"/>).</summary>
     void CaptureNow()
     {
         if (!Diagnostics) return;

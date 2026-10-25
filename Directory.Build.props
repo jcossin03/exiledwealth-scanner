@@ -1,0 +1,9 @@
+<Project>
+  <!-- Every package version, transitive ones too, is pinned in each project's packages.lock.json.
+       In CI (GitHub sets CI=true) a restore that would change a lock file fails instead:
+       what ships is what was reviewed. Locally, `dotnet restore` updates them; commit the change. -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+</Project>
