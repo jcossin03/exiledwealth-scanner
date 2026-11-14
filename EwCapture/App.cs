@@ -90,6 +90,9 @@ sealed class App : ApplicationContext
         if (!Diagnostics && Directory.Exists(_queue.Directory))
             try { Directory.Delete(_queue.Directory, recursive: true); Log("removed queued screenshots: not used outside dev"); }
             catch (IOException e) { Log($"couldn't remove queued screenshots: {e.Message}"); }
+        // Reads an older version left waiting were taken on its 2 s timer: the site refuses them, so don't send them.
+        var stale = _snapshots.SetAsideOlderThan(new System.Version(0, 5, 0));
+        if (stale > 0) Log($"set aside {stale} reads taken by a version before 0.5.0");
         _icons = new IconCache(Path.Combine(DataDir, "icons"), Log);
         _updater = new Updater(LoadBaseUrl(), Log);
         _updateItem.Click += async (_, _) =>
