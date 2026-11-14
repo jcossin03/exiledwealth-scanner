@@ -44,8 +44,11 @@ Every request carries the app's version in its `User-Agent`.
 ## What it never does
 
 - **No input.** It never clicks, presses keys or switches tabs.
-- **No game memory, files or traffic.** It doesn't open the game's process, read its
-  memory or its network traffic, or read its files.
+- **No game memory or traffic, and it never changes game files.** It doesn't open the
+  game's process or read its memory or network traffic. It reads one game file, and only
+  in the diagnostics mode below: the display and UI sections of the game's settings file
+  (`production_Config.ini`), never its login or network sections
+  ([`GameConfig.cs`](EwCapture.Core/GameConfig.cs)).
 - **No screenshots leave your PC.** The one exception is a diagnostics mode we use in
   development: the read key also uploads its copy of the whole game window (still one
   copy per press), with the display and UI sections of the game's settings file, to
