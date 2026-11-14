@@ -134,6 +134,9 @@ sealed class App : ApplicationContext
             new ToolStripSeparator(),
             _linkItem,
             new ToolStripMenuItem("Quit", null, (_, _) => Quit()),
+            new ToolStripSeparator(),
+            // GGG's third-party notice, which their developer docs ask every public tool to show.
+            new ToolStripMenuItem("Not affiliated with or endorsed by Grinding Gear Games") { Enabled = false },
         ]);
 
         _tray = new NotifyIcon
@@ -153,7 +156,8 @@ sealed class App : ApplicationContext
             Notify($"{_readKey} is taken by another program. Pick another read key from the tray menu.", ToolTipIcon.Warning);
         else if (!File.Exists(KeypressNoticePath))
         {
-            Notify($"Exiled Wealth now reads a stash tab only when you press {_readKey}. Change the key from the tray menu.", ToolTipIcon.Info);
+            // GGG's overlay rules: read the screen only "as long as the user is aware of what you are doing with that data".
+            Notify($"Exiled Wealth reads a stash tab only when you press {_readKey}, and sends its item counts to your Exiled Wealth account. Change the key from the tray menu.", ToolTipIcon.Info);
             try { Directory.CreateDirectory(DataDir); File.WriteAllText(KeypressNoticePath, "shown"); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
@@ -496,7 +500,7 @@ sealed class App : ApplicationContext
             var result = await _api.LinkAsync(code, Environment.MachineName);
             TokenStore.Save(result.Token);
             _account = result.AccountName;
-            Notify($"Linked to {result.AccountName}. Open a special tab in game and press {_readKey} to read it.", ToolTipIcon.Info);
+            Notify($"Linked to {result.AccountName}. Open a special tab in game and press {_readKey}: its item counts go to your account.", ToolTipIcon.Info);
             RefreshMenu();
             await LoadLayouts();
             await Drain();
