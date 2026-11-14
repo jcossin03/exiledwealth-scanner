@@ -157,7 +157,7 @@ sealed class App : ApplicationContext
         else if (!File.Exists(KeypressNoticePath))
         {
             // GGG's overlay rules: read the screen only "as long as the user is aware of what you are doing with that data".
-            Notify($"Exiled Wealth reads a stash tab only when you press {_readKey}, and sends its item counts to your Exiled Wealth account. Change the key from the tray menu.", ToolTipIcon.Info);
+            Notify($"Press {_readKey} to read a stash tab. Its item counts go to your Exiled Wealth account.", ToolTipIcon.Info);
             try { Directory.CreateDirectory(DataDir); File.WriteAllText(KeypressNoticePath, "shown"); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
