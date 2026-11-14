@@ -65,18 +65,6 @@ static class GameWindow
     }
 
     /// <summary>
-    /// Just the rows the stash-open check needs (a few kilobytes), at 1440p scale:
-    /// row 0 is 1440p row <see cref="TabStrip.GateTop"/>.
-    /// </summary>
-    public static Frame GrabGateStrip(Window w)
-    {
-        double s = w.Scale;
-        int y = (int)Math.Floor(TabStrip.GateTop * s), h = Math.Max(1, (int)Math.Ceiling(TabStrip.GateRows * s));
-        int width = Math.Min(w.Width, (int)Math.Ceiling(TabStrip.GateWidth * s));
-        return Copy(w, 0, y, width, h).Resized(TabStrip.GateWidth, TabStrip.GateRows);
-    }
-
-    /// <summary>
     /// The client area, or with <paramref name="panelOnly"/> only its left part where the
     /// stash panel sits (a third of an ultrawide). Plain screen copy, the way poe2pricer
     /// does it: the game must be in front, and exclusive fullscreen comes out black.
@@ -92,19 +80,6 @@ static class GameWindow
             && w.Width == screen.Bounds.Width && w.Height == screen.Bounds.Height;
         var mode = hasCaption ? "windowed" : fillsScreen ? "borderless" : "borderless-partial";
         return new Capture(frame, new Size2(w.Width, w.Height), monitor, w.Process, mode);
-    }
-
-    /// <summary>
-    /// The diagnostic screenshot path: the whole client area, or a reason. A screen copy holds whatever
-    /// covers the game, so only ever with the game in front, before and after the copy: anything else
-    /// (a browser, a password manager) must never be uploaded.
-    /// </summary>
-    public static (Capture? Capture, string? Problem) Grab()
-    {
-        var (w, problem) = Find(onlyIfInFront: true);
-        if (w is null) return (null, problem);
-        var capture = Grab(w, panelOnly: false);
-        return Native.GetForegroundWindow() == w.Handle ? (capture, null) : (null, "The game left the front during the capture.");
     }
 
     static Frame Copy(Window w, int x, int y, int width, int height)

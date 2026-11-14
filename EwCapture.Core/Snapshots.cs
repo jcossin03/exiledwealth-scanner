@@ -151,6 +151,29 @@ public sealed class SnapshotQueue(string dir)
         }
     }
 
+    /// <summary>
+    /// Sets aside waiting reads taken by a scanner older than <paramref name="min"/> (Tool is
+    /// "ew-capture X.Y.Z"). Up to 0.4.13 the scanner read the screen on a timer, which GGG's rules
+    /// don't allow, and the site refuses those versions; their reads aren't sent after an update either.
+    /// </summary>
+    public int SetAsideOlderThan(Version min)
+    {
+        int n = 0;
+        foreach (var id in Pending())
+        {
+            try
+            {
+                var s = JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(Path.Combine(Directory, id + ".json")), CaptureMeta.Json);
+                if (s?.Tool?.Split(' ').LastOrDefault() is { } v && Version.TryParse(v, out var taken) && taken >= min) continue;
+            }
+            catch (FileNotFoundException) { continue; }
+            catch (JsonException) { } // unreadable: set aside, as SyncAsync would
+            SetAside(id);
+            n++;
+        }
+        return n;
+    }
+
     void SetAside(string id)
     {
         System.IO.Directory.CreateDirectory(RejectedDirectory);

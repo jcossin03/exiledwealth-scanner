@@ -89,6 +89,22 @@ public class SnapshotTests
     }
 
     [Fact]
+    public void ReadsLeftWaitingByAVersionThatReadOnATimerAreSetAside()
+    {
+        var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
+        var a = Snapshot.From(Read((10, "Divine Orb", 1)), "A", "ew-capture 0.4.13", "p", T0);
+        q.Enqueue(a);
+        q.Enqueue(a with { Tab = a.Tab with { Name = "B" }, Tool = "ew-capture 0.5.0" });
+        q.Enqueue(a with { Tab = a.Tab with { Name = "C" }, Tool = "something else" });
+
+        Assert.Equal(2, q.SetAsideOlderThan(new Version(0, 5, 0)));
+
+        Assert.Single(q.Pending()); // only B, taken by 0.5.0
+        Assert.Equal(2, Directory.GetFiles(q.RejectedDirectory).Length);
+        Assert.Equal(0, q.SetAsideOlderThan(new Version(0, 5, 0)));
+    }
+
+    [Fact]
     public async Task SyncSetsAsideARefusedReadAndKeepsEverythingOnAServerError()
     {
         var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
