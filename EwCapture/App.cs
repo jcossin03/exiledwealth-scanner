@@ -4,7 +4,7 @@ using EwCapture.Core.Recognition;
 
 namespace EwCapture;
 
-/// <summary>Tray icon, hotkey, auto reading, diagnostic captures and the upload loop.</summary>
+/// <summary>Tray icon, the read key, diagnostic captures and the upload loop.</summary>
 sealed class App : ApplicationContext
 {
     public static readonly string DataDir =
@@ -12,19 +12,24 @@ sealed class App : ApplicationContext
     /// <summary>From the csproj's Version, so releases and the app never disagree.</summary>
     public static readonly string Version = typeof(App).Assembly.GetName().Version!.ToString(3);
     public static readonly string ToolVersion = $"ew-capture {Version}";
-    const string HotkeyText = "Ctrl+Shift+F12";
+    /// <summary>The read key the player picked; absent, <see cref="ReadKey.Default"/>.</summary>
+    static readonly string ReadKeyPath = Path.Combine(DataDir, "read-key.txt");
+    /// <summary>Present once the "reads need a key press now" notice has been shown.</summary>
+    static readonly string KeypressNoticePath = Path.Combine(DataDir, "keypress-notice.txt");
 
     readonly NotifyIcon _tray;
-    readonly HotkeyWindow _hotkey;
+    // The only trigger for a read: GGG allows a screen read only once per manual key press.
+    HotkeyWindow _hotkey;
+    ReadKey _readKey;
     static readonly string LogPath = Path.Combine(DataDir, "log.txt");
     // Queues are per server: a read taken while pointed at dev must never reach the live site.
     readonly UploadQueue _queue = new(Path.Combine(ServerDataDir, "queue"));
     readonly SnapshotQueue _snapshots = new(Path.Combine(ServerDataDir, "snapshots"));
     static readonly string LayoutsPath = Path.Combine(DataDir, "layouts.json");
     readonly IconCache _icons;
-    readonly AutoReader _auto;
+    readonly TabReader _tabs;
     readonly System.Windows.Forms.Timer _layoutRefresh = new() { Interval = 3_600_000 };
-    readonly ToolStripMenuItem _autoItem = new("Read tabs automatically") { CheckOnClick = true, Checked = true };
+    readonly ToolStripMenuItem _readKeyItem = new();
     readonly ToolStripMenuItem _readItem = new() { Enabled = false };
     readonly ToolStripMenuItem _versionItem = new() { Enabled = false };
     readonly ToolStripMenuItem _updateItem = new();
@@ -44,9 +49,8 @@ sealed class App : ApplicationContext
     static readonly TimeSpan RetryMin = TimeSpan.FromSeconds(30), RetryMax = TimeSpan.FromMinutes(5);
     readonly System.Windows.Forms.Timer _retry = new() { Interval = (int)RetryMin.TotalMilliseconds };
     DateTime _nextAttempt = DateTime.MinValue;
-    // Reads are sent in batches: a new read waits for the stash to go quiet, so sorting loot across
-    // ten tabs is one request, not ten. A long session still reports every BatchMax at the latest.
-    // The hotkey sends at once.
+    // Reads are sent in batches: a new read waits 30 s for the next press, so reading ten tabs in a
+    // row is one request, not ten. A long session still reports every BatchMax at the latest.
     static readonly TimeSpan BatchQuiet = TimeSpan.FromSeconds(30), BatchMax = TimeSpan.FromMinutes(2);
     readonly System.Windows.Forms.Timer _debounce = new() { Interval = (int)BatchQuiet.TotalMilliseconds };
     DateTime _batchSince = DateTime.MinValue;
@@ -93,10 +97,10 @@ sealed class App : ApplicationContext
             if (_updater.ReadyVersion is not null) { Log($"restarting to update to {_updater.ReadyVersion}"); _updater.RestartToApply(); return; }
             await CheckUpdates();
         };
-        _auto = new AutoReader(_snapshots, _icons, Log,
+        _tabs = new TabReader(_snapshots, _icons, Log,
             status => OnUi(() => { _lastRead = status; RefreshMenu(); }),
             () => OnUi(Queued));
-        _autoItem.CheckedChanged += (_, _) => { _auto.Enabled = _autoItem.Checked; Log($"auto read {(_autoItem.Checked ? "on" : "off")}"); };
+        _readKeyItem.Click += (_, _) => ChangeReadKey();
         _autoUpdateItem.CheckedChanged += (_, _) =>
         {
             try { if (_autoUpdateItem.Checked) File.WriteAllText(AutoUpdatePath, "on"); else File.Delete(AutoUpdatePath); }
@@ -114,10 +118,8 @@ sealed class App : ApplicationContext
             _queueItem,
             _lastItem,
             new ToolStripSeparator(),
-            _autoItem,
-            new ToolStripMenuItem($"Read now ({HotkeyText})", null, (_, _) => ReadNowFromMenu()),
-            .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Send diagnostic screenshot", null, async (_, _) => await CaptureFromMenu()) } : []),
-            // Screenshot tools exist only on dev (see Diagnostics).
+            _readKeyItem,
+            // Screenshot tools exist only on dev (see Diagnostics). The read key takes the screenshots there.
             .. (Diagnostics ? new ToolStripItem[] { _labelItem, new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()) } : []),
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
             .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Retry rejected captures", null, async (_, _) => await RetryRejected()) } : []),
@@ -141,10 +143,17 @@ sealed class App : ApplicationContext
 
         // The menu is a control, so WinForms has installed its UI context by now.
         _ui = SynchronizationContext.Current;
-        _hotkey = new HotkeyWindow(Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.F12, ReadNow);
-        Log($"hotkey {HotkeyText} registered: {_hotkey.Registered}");
+        _readKey = LoadReadKey();
+        _hotkey = Register(_readKey);
+        Log($"read key {_readKey} registered: {_hotkey.Registered}");
         if (!_hotkey.Registered)
-            Notify($"{HotkeyText} is taken by another program. Use the tray menu's Read now instead.", ToolTipIcon.Warning);
+            Notify($"{_readKey} is taken by another program. Pick another read key from the tray menu.", ToolTipIcon.Warning);
+        else if (!File.Exists(KeypressNoticePath))
+        {
+            Notify($"Exiled Wealth now reads a stash tab only when you press {_readKey}. Change the key from the tray menu.", ToolTipIcon.Info);
+            try { Directory.CreateDirectory(DataDir); File.WriteAllText(KeypressNoticePath, "shown"); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
 
         _retry.Tick += async (_, _) => await Drain();
         _debounce.Tick += async (_, _) => await Flush();
@@ -262,7 +271,7 @@ sealed class App : ApplicationContext
         // Dev turns on diagnostics (screenshot uploads): nobody ends up there by curiosity without being told.
         if (new Uri(url).Host == "dev.exiledwealth.com" && MessageBox.Show(
                 "dev.exiledwealth.com is the developer's test server, not the live site. It has its own login, and your stash there starts empty.\n\n"
-                + $"While this PC is linked to it, {HotkeyText} and \"Send diagnostic screenshot\" also upload a screenshot of the game window, "
+                + $"While this PC is linked to it, the read key ({_readKey}) also uploads a screenshot of the game window, "
                 + "with the display and UI sections of the game's settings file, to help fix misreads.\n\n"
                 + "Switch to the test server?",
                 "Exiled Wealth", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
@@ -276,24 +285,75 @@ sealed class App : ApplicationContext
 
     void OnUi(Action a) { if (_ui is null) a(); else _ui.Post(_ => a(), null); }
 
-    /// <summary>The hotkey: read the open tab now, and on dev also send a screenshot for diagnosis.</summary>
+    /// <summary>
+    /// The read key: one screen copy of the game, read for the open tab. On dev the same copy is also the
+    /// diagnostic screenshot, so a press never makes two copies (GGG: once per manual key press).
+    /// </summary>
     void ReadNow()
     {
-        _ = ThenFlush(_auto.ReadNowAsync());
-        if (_api.Token is not null && Diagnostics) CaptureNow();
+        var diagnose = Diagnostics && _api.Token is not null;
+        GameWindow.Capture capture;
+        try
+        {
+            // Only ever the game in front, so another window is never read.
+            var (window, problem) = GameWindow.Find(onlyIfInFront: true);
+            if (window is null) { _lastRead = problem!; RefreshMenu(); return; }
+            capture = GameWindow.Grab(window, panelOnly: !diagnose);
+            // A copy holds whatever covered the game: keep it only if the game was still in front.
+            if (Native.GetForegroundWindow() != window.Handle) { _lastRead = "The game left the front during the read"; RefreshMenu(); return; }
+        }
+        catch (Exception e) { Log($"read failed: {e}"); return; }
+        _ = _tabs.ReadAsync(capture.Frame);
+        if (diagnose) QueueDiagnostic(capture);
     }
 
-    void ReadNowFromMenu()
+    /// <summary>The saved read key, or the default when there's none (or it's unreadable).</summary>
+    static ReadKey LoadReadKey()
     {
-        Notify("Switch to the game: it reads as soon as Path of Exile 2 is in front (within 10 s).", ToolTipIcon.Info);
-        _ = ThenFlush(_auto.ReadWhenGameInFrontAsync(TimeSpan.FromSeconds(10)));
+        try
+        {
+            if (File.Exists(ReadKeyPath) && ReadKey.Parse(File.ReadAllText(ReadKeyPath)) is { } k && k.Blocker() is null) return k;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"read key unreadable: {e.Message}"); }
+        return ReadKey.Default;
     }
 
-    /// <summary>A read the player asked for goes up as soon as it's taken, batch or no batch.</summary>
-    async Task ThenFlush(Task read)
+    HotkeyWindow Register(ReadKey key) => new(
+        (key.Ctrl ? Native.MOD_CONTROL : 0) | (key.Alt ? Native.MOD_ALT : 0) | (key.Shift ? Native.MOD_SHIFT : 0),
+        (Keys)key.Vk, ReadNow);
+
+    /// <summary>Tray menu: pick a new read key by pressing it.</summary>
+    void ChangeReadKey()
     {
-        try { await read; } catch (Exception e) { Log($"read now failed: {e}"); }
-        OnUi(() => _ = Flush());
+        // Let go of the current key while the dialog is open, or pressing it there would read instead of record.
+        _hotkey.Dispose();
+        HotkeyWindow? chosen = null;
+        bool TryUse(ReadKey key)
+        {
+            var window = Register(key);
+            if (!window.Registered) { window.Dispose(); return false; }
+            chosen?.Dispose();
+            chosen = window;
+            return true;
+        }
+        using (var dialog = new ReadKeyDialog(_readKey, TryUse))
+        {
+            dialog.ShowDialog();
+            if (dialog.DialogResult == DialogResult.OK && dialog.Chosen is { } key && chosen is not null)
+            {
+                _hotkey = chosen;
+                _readKey = key;
+                try { Directory.CreateDirectory(DataDir); File.WriteAllText(ReadKeyPath, key.Store()); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"couldn't save the read key: {e.Message}"); }
+                Log($"read key changed to {key}");
+                RefreshMenu();
+                return;
+            }
+        }
+        chosen?.Dispose();
+        _hotkey = Register(_readKey);
+        if (!_hotkey.Registered) Log($"read key {_readKey} couldn't be registered again");
+        RefreshMenu();
     }
 
     /// <summary>A read was queued: wait for the stash to go quiet, unless this batch has waited long enough already.</summary>
@@ -343,30 +403,16 @@ sealed class App : ApplicationContext
     void UseLayouts(LayoutSet set)
     {
         _layoutsVersion = set.Version;
-        _auto.UseLayouts(set);
+        _tabs.UseLayouts(set);
         Log($"layouts {set.Version} (patch {set.Patch}): {set.Layouts.Count} tabs");
         var icons = set.Layouts.Values.SelectMany(l => l.Slots).Select(s => s.Icon).OfType<string>().ToList();
         _ = Task.Run(() => _icons.PrefetchAsync(icons));
     }
 
-    /// <summary>From the tray the game is behind the menu: wait for it to come to the front, as Read now does.</summary>
-    async Task CaptureFromMenu()
-    {
-        Notify("Switch to the game: the screenshot is taken as soon as Path of Exile 2 is in front (within 10 s).", ToolTipIcon.Info);
-        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (GameWindow.Find(onlyIfInFront: true).Window is null && DateTime.UtcNow < until) await Task.Delay(250);
-        CaptureNow(); // still not in front: skipped, with the reason logged
-    }
-
-    /// <summary>A diagnostic screenshot of the game, only while it's in front (see <see cref="GameWindow.Grab()"/>).</summary>
-    void CaptureNow()
+    /// <summary>Dev only: queue the read key's screen copy as a diagnostic screenshot.</summary>
+    void QueueDiagnostic(GameWindow.Capture capture)
     {
         if (!Diagnostics) return;
-        GameWindow.Capture? capture;
-        string? problem;
-        try { (capture, problem) = GameWindow.Grab(); }
-        catch (Exception e) { Log($"capture crashed: {e}"); Notify($"Capture failed: {e.Message}", ToolTipIcon.Error); return; }
-        if (capture is null) { Log($"capture skipped: {problem}"); Notify(problem!, ToolTipIcon.Warning); return; }
 
         var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var meta = new CaptureMeta(
@@ -393,7 +439,7 @@ sealed class App : ApplicationContext
         try
         {
             // Reads and seen notes go in one request. A note is best effort: lost, it only means a session shows that tab as not opened.
-            var notes = _auto.Seen.TakeNotes();
+            var notes = _tabs.Seen.TakeNotes();
             int pending = _queue.Pending().Count, reads = _snapshots.Pending().Count;
             if (pending + reads + notes.Count == 0) return;
             var outcome = UploadOutcome.Stored;
@@ -447,7 +493,7 @@ sealed class App : ApplicationContext
             var result = await _api.LinkAsync(code, Environment.MachineName);
             TokenStore.Save(result.Token);
             _account = result.AccountName;
-            Notify($"Linked to {result.AccountName}. Open your special tabs in game and they are read automatically.", ToolTipIcon.Info);
+            Notify($"Linked to {result.AccountName}. Open a special tab in game and press {_readKey} to read it.", ToolTipIcon.Info);
             RefreshMenu();
             await LoadLayouts();
             await Drain();
@@ -503,6 +549,7 @@ sealed class App : ApplicationContext
         var linked = _api.Token is not null;
         _accountItem.Text = linked ? $"Linked: {_account ?? "(checking…)"}" : "Not linked";
         _readItem.Text = $"Last read: {_lastRead}";
+        _readKeyItem.Text = _hotkey.Registered ? $"Read key: {_readKey} (change…)" : $"Read key: {_readKey} is taken by another program (change…)";
         _versionItem.Text = $"Version {Version}: {_updateStatus}";
         _updateItem.Text = _updater.ReadyVersion is { } v ? $"Restart to update to {v}" : "Check for updates";
         _updateItem.Enabled = _updater.Installed;
@@ -561,7 +608,6 @@ sealed class App : ApplicationContext
             _debounce.Dispose();
             _layoutRefresh.Dispose();
             _updateTimer.Dispose();
-            _auto.Dispose();
             _hotkey.Dispose();
             _tray.Visible = false;
             _tray.Dispose();

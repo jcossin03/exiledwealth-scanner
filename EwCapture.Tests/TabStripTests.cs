@@ -62,6 +62,14 @@ public class StashGateTests
     }
 
     [Fact]
+    public void SeesTheStashOpenInTheWholeFrameOfOneRead()
+    {
+        // The read key makes one screen copy, and the stash-open check runs on that frame.
+        foreach (var file in Directory.GetFiles(Fixtures, "*-*-*-*-*.png"))
+            Assert.True(TabStrip.StashOpen(RecognitionTests.LoadFrame(file).NormalisedTo1440(), top: 0), Path.GetFileName(file));
+    }
+
+    [Fact]
     public void TheGameWorldIsNotAStash()
     {
         // The same strip height taken from the middle of the screen (hideout, ground, effects)
