@@ -30,17 +30,8 @@ sealed class ReadKeyDialog : Form
         Padding = new Padding(12);
         TopMost = true;
 
-        var intro = new Label
-        {
-            Text = "Press the keys you want to use to read the open stash tab. Each press reads the tab once. "
-                + "The game won't see this key while Exiled Wealth is running, so pick one you don't use in game. "
-                + "A key another program has claimed is caught when you save; one an add-on watches for "
-                + "(an AutoHotkey script, a price checker) can't be detected, and both would fire.",
-            AutoSize = true,
-            MaximumSize = new Size(380, 0),
-        };
+        var intro = new Label { Text = "Press the new key combination.", AutoSize = true };
         _keyLabel.Text = current.ToString();
-        _note.Text = "This is the key now. Press a new one to change it.";
 
         var reset = new NoFocusButton { Text = $"Use {ReadKey.Default}", AutoSize = true };
         reset.Click += (_, _) => Choose(ReadKey.Default);
@@ -78,7 +69,7 @@ sealed class ReadKeyDialog : Form
         _candidate = blocker is null ? key : null;
         _save.Enabled = blocker is null;
         _note.ForeColor = blocker is null && key.Warning() is not null ? Color.DarkOrange : SystemColors.GrayText;
-        _note.Text = blocker ?? (key.Warning() is { } warning ? $"{warning} Save to use it anyway." : "Save to use it.");
+        _note.Text = blocker ?? key.Warning() ?? "";
     }
 
     void Save()
@@ -86,7 +77,7 @@ sealed class ReadKeyDialog : Form
         if (_candidate is not { } key) return;
         if (!_tryUse(key))
         {
-            _note.Text = $"Another program already uses {key}. Pick a different key.";
+            _note.Text = $"Another program uses {key}.";
             _save.Enabled = false;
             return;
         }

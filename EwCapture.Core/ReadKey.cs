@@ -27,12 +27,11 @@ public readonly record struct ReadKey(bool Ctrl, bool Alt, bool Shift, int Vk)
     {
         bool fKey = Vk is >= F1 and <= F24;
         if (!Ctrl && !Alt && !fKey)
-            return "On its own, this key won't reach the game, chat or any other program while Exiled Wealth runs.";
-        if (Ctrl && !Alt && !Shift && Vk is 'C' or 'V' or 'X' or 'A' or 'F')
-            return "By default the game uses this one (copy an item, paste, select all, search the stash). Fine if you've rebound it.";
-        if (Ctrl && Alt && !Shift && Vk == 'C')
-            return "By default the game uses this for an advanced item copy. Fine if you've rebound it.";
-        if (Alt && !Ctrl && !Shift && Vk == F4) return "Alt+F4 closes windows: they won't close with it while Exiled Wealth runs.";
+            return "The game and chat won't get this key.";
+        // Copy item, paste, cut, select all, stash search; Ctrl+Alt+C is the advanced item copy.
+        if (Ctrl && !Shift && (!Alt && Vk is 'C' or 'V' or 'X' or 'A' or 'F' || Alt && Vk == 'C'))
+            return "The game uses this by default.";
+        if (Alt && !Ctrl && !Shift && Vk == F4) return "Alt+F4 will stop closing windows.";
         return null;
     }
 
