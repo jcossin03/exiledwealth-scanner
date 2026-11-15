@@ -20,6 +20,12 @@ public enum UploadOutcome
     RetryLater,
 }
 
+public static class UploadOutcomeExtensions
+{
+    /// <summary>The server won't take more right now (a 401, or a 429, 5xx or no connection): nothing else goes in the same drain.</summary>
+    public static bool StopsDrain(this UploadOutcome o) => o is UploadOutcome.Unlinked or UploadOutcome.RetryLater;
+}
+
 public sealed class ScannerException(string message) : Exception(message);
 
 /// <summary>

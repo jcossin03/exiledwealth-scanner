@@ -23,17 +23,14 @@ sealed class TabReader
     int _busy;
 
     /// <summary>
-    /// Tabs opened without a change. Nothing notes them since reads became hotkey-only (every
-    /// read is sent whole); kept so the sync request keeps its shape.
-    /// </summary>
-    public SeenTracker Seen { get; } = new(TimeSpan.FromMinutes(5));
-
-    /// <summary>
     /// True while a press is being read. A read runs on the caller's thread (the tray app's UI thread)
     /// until the tab-name OCR, and finishes there after it, so another press only finds it true during that wait.
     /// Check it before copying the screen: a press that can't be read shouldn't make a copy.
     /// </summary>
     public bool Busy => Volatile.Read(ref _busy) == 1;
+
+    /// <summary>True once slot maps are loaded (fresh or cached): without them a press can't read a tab.</summary>
+    public bool Ready => _layouts is not null;
 
     /// <param name="status">Shown in the tray menu. Called from the read, on the thread that started it.</param>
     /// <param name="queued">A snapshot was queued: time to upload. Called from the read, on the thread that started it.</param>

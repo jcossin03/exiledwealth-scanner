@@ -1,3 +1,4 @@
+using EwCapture.Core;
 using Velopack;
 using Velopack.Sources;
 
@@ -6,45 +7,56 @@ namespace EwCapture;
 /// <summary>
 /// Self-update through Velopack, from releases we host on our own site. Updates
 /// download in the background and are applied when the user picks "Restart to
-/// update" or when the app next exits: never in the middle of play.
+/// update" or when the app next exits: never in the middle of play. Where the check
+/// stands is one <see cref="UpdateState"/>, which both of the tray's update lines show.
 /// </summary>
-sealed class Updater(string baseUrl, Action<string> log)
+sealed class Updater
 {
-    // Only feeds signed with our update key are believed (SignedFeedDownloader).
-    readonly UpdateManager _mgr = new(new SimpleWebSource(baseUrl + "api/scanner/releases", new SignedFeedDownloader()));
-    UpdateInfo? _ready;
-    int _checking;
+    readonly UpdateManager _mgr;
+    readonly Action<string> _log;
+    UpdateInfo? _ready; // what State.Ready names, for Velopack
 
-    /// <summary>False for a plain copied exe: Velopack can only update what it installed.</summary>
-    public bool Installed => _mgr.IsInstalled;
-    public string? ReadyVersion => _ready?.TargetFullRelease.Version.ToString();
-
-    /// <summary>Check and download. Returns a line for the tray menu.</summary>
-    public async Task<string> CheckAsync()
+    public Updater(ServerProfile server, Action<string> log)
     {
-        if (!Installed) return "updates need the installed app (see the Exiled Wealth site)";
-        if (Interlocked.Exchange(ref _checking, 1) == 1) return "already checking";
+        // Only feeds signed with our update key are believed (SignedFeedDownloader).
+        _mgr = new(new SimpleWebSource(server.BaseUrl + "api/scanner/releases", new SignedFeedDownloader()));
+        _log = log;
+        State = UpdateState.Start(_mgr.IsInstalled);
+    }
+
+    public UpdateState State { get; private set; }
+
+    /// <summary>
+    /// Check and download, unless a check is already running or this is a plain copied exe (then nothing
+    /// changes). State is Checking as soon as this returns its task, so the caller can show it at once.
+    /// </summary>
+    public async Task CheckAsync()
+    {
+        if (!State.CanCheck) return;
+        State = State.Checking();
         try
         {
             var info = await _mgr.CheckForUpdatesAsync();
-            if (info is null) { log("updates: up to date"); return $"up to date ({DateTime.Now:HH:mm})"; }
-            log($"updates: downloading {info.TargetFullRelease.Version}");
+            if (info is null) { _log("updates: up to date"); State = State.UpToDate(DateTime.Now); return; }
+            _log($"updates: downloading {info.TargetFullRelease.Version}");
             await _mgr.DownloadUpdatesAsync(info);
             _ready = info;
-            log($"updates: {info.TargetFullRelease.Version} ready");
-            return $"{info.TargetFullRelease.Version} ready: restart to update";
+            State = State.Downloaded(info.TargetFullRelease.Version.ToString(), DateTime.Now);
+            _log($"updates: {info.TargetFullRelease.Version} ready");
         }
         catch (Exception e)
         {
-            log($"updates: check failed: {e.Message}");
-            return "update check failed (see log)";
+            _log($"updates: check failed: {e.Message}");
+            State = State.Failed();
         }
-        finally { Interlocked.Exchange(ref _checking, 0); }
     }
 
+    /// <summary>Install the downloaded update and start it. On success this process exits here; it returns only when there was nothing to install or Velopack failed.</summary>
     public void RestartToApply()
     {
-        if (_ready is not null) _mgr.ApplyUpdatesAndRestart(_ready.TargetFullRelease);
+        if (_ready is null) return;
+        try { _mgr.ApplyUpdatesAndRestart(_ready.TargetFullRelease); }
+        catch (Exception e) { _log($"updates: couldn't install {_ready.TargetFullRelease.Version}: {e.Message}"); }
     }
 
     /// <summary>On quit: install a downloaded update once this process is gone, without restarting.</summary>
