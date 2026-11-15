@@ -70,10 +70,11 @@ public sealed class UploadQueue(string dir)
     }
 
     /// <summary>
-    /// Upload everything pending. Stops at the first failure that isn't the
-    /// capture's own fault, so a dead connection doesn't churn the whole queue.
+    /// Upload everything pending. Stops at the first failure that isn't the capture's own fault, so a
+    /// dead connection doesn't churn the whole queue, and returns it (Unlinked or RetryLater) so the
+    /// caller unlinks or backs off as it would for the sync; Stored when every capture was answered.
     /// </summary>
-    public async Task<int> DrainAsync(ScannerApi api, CancellationToken ct = default)
+    public async Task<(int Sent, UploadOutcome Outcome)> DrainAsync(ScannerApi api, CancellationToken ct = default)
     {
         var sent = 0;
         foreach (var id in Pending())
@@ -83,8 +84,8 @@ public sealed class UploadQueue(string dir)
             if (outcome == UploadOutcome.Stored) { Remove(id); sent++; continue; }
             // The server will never take this file; retrying won't help, but keep it to look at.
             if (outcome == UploadOutcome.Rejected) { Reject(id); continue; }
-            break;
+            return (sent, outcome);
         }
-        return sent;
+        return (sent, UploadOutcome.Stored);
     }
 }

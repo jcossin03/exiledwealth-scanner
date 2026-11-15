@@ -24,72 +24,34 @@ public sealed record Snapshot(DateTimeOffset CapturedAt, string Tool, string Pat
     /// <summary>The read as POST /api/scanner/sync takes it: counts only, the item being implied by the slot.</summary>
     public object ToSyncRead() => new { layout = Tab.Layout, name = Tab.Name, index = Tab.Index, at = CapturedAt, counts = Reads.Select(r => new[] { r.Slot, r.Count }).ToArray() };
 
-    /// <summary>What identifies the tab and its contents, for "did anything change".</summary>
+    /// <summary>What identifies the tab: a newer read of the same key replaces one still waiting.</summary>
     public string Key => $"{Tab.Layout}|{Tab.Name}";
-    public string Contents => string.Join(",", Reads.Select(r => $"{r.Slot}:{r.Count}"));
 }
-
-/// <summary>
-/// Decides which reads are worth sending: only a tab whose counts changed. The user scans
-/// to learn what changed and by how much; an unchanged tab is reported through the seen
-/// note instead (see <see cref="SeenTracker"/>), which the site keeps without storing a read.
-/// </summary>
-public sealed class ChangeTracker
-{
-    readonly Dictionary<string, (string Contents, DateTimeOffset At)> _sent = new();
-
-    public bool ShouldSend(Snapshot s) =>
-        !_sent.TryGetValue(s.Key, out var last) || last.Contents != s.Contents;
-
-    public void MarkSent(Snapshot s) => _sent[s.Key] = (s.Contents, s.CapturedAt);
-}
-
-/// <summary>
-/// Tabs that were on screen with unchanged counts, for POST /api/scanner/seen: lets a farming
-/// session tell "checked, no change" from "not opened". At most one note per tab per
-/// <paramref name="every"/>; best effort, kept in memory only.
-/// </summary>
-public sealed class SeenTracker(TimeSpan every)
-{
-    readonly Dictionary<string, DateTimeOffset> _noted = new();
-    readonly Dictionary<string, (SnapshotTab Tab, DateTimeOffset At)> _pending = new();
-    readonly object _lock = new();
-
-    public void Note(Snapshot s)
-    {
-        lock (_lock)
-        {
-            if (_noted.TryGetValue(s.Key, out var last) && s.CapturedAt - last < every) return;
-            _noted[s.Key] = s.CapturedAt;
-            _pending[s.Key] = (s.Tab, s.CapturedAt);
-        }
-    }
-
-    /// <summary>The notes not sent yet (at most 50); taking them clears them.</summary>
-    public List<SeenNote> TakeNotes()
-    {
-        lock (_lock)
-        {
-            var notes = _pending.Values.Take(50).Select(p => new SeenNote(p.Tab.Layout, p.Tab.Name, p.Tab.Index, p.At)).ToList();
-            _pending.Clear();
-            return notes;
-        }
-    }
-}
-
-/// <summary>A tab that was on screen with unchanged counts, for the sync body.</summary>
-public sealed record SeenNote(string Layout, string Name, int Index, DateTimeOffset At);
 
 /// <summary>
 /// Snapshots waiting on disk until the server has them, oldest first. One file per tab: the
 /// user wants to know what the tab holds now, so a newer read of a tab replaces the one still
 /// waiting. A site outage then costs one upload per tab afterwards, not one per read.
+/// <para>
+/// Reads the server refuses are set aside, never deleted on the spot: in rejected/ for good (a read
+/// refused on its own, an unreadable file, a read an old version left), or in rejected/whole when the
+/// whole request was refused (a 400), which is more likely the server's fault: those go back in line
+/// once, after the next sync the server stores. Set-aside reads are deleted after <see cref="KeepSetAside"/>.
+/// </para>
 /// </summary>
 public sealed class SnapshotQueue(string dir)
 {
     static long _sequence;
     public string Directory { get; } = dir;
     public string RejectedDirectory => Path.Combine(Directory, "rejected");
+    /// <summary>Reads a whole-body refusal set aside, waiting for their one more try.</summary>
+    public string WholeRejectedDirectory => Path.Combine(RejectedDirectory, "whole");
+
+    /// <summary>How long a set-aside read is kept (to look at, or for its retry) before start-up deletes it.</summary>
+    public static readonly TimeSpan KeepSetAside = TimeSpan.FromDays(30);
+
+    // Reads put back in line after a whole-body refusal this session: refused whole again, they're set aside for good.
+    readonly HashSet<string> _retried = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Reads a scanner older than this left queued are set aside at start-up, never sent (see
@@ -120,19 +82,20 @@ public sealed class SnapshotQueue(string dir)
     public const int MaxReadsPerSync = 50;
 
     /// <summary>
-    /// Everything waiting, in one request per 50 reads, with the seen notes on the first: the server
-    /// answers each read on its own. A stored read is deleted, a refused one set aside to look at;
-    /// on a failure that isn't the reads' fault they all wait for the next try. Returns how many
-    /// reads were stored, how the last request went, and how long the server asked us to wait.
+    /// Everything waiting, in one request per 50 reads: the server answers each read on its own. A stored
+    /// read is deleted, a refused one set aside for good; a refused request (400) sets its reads aside for
+    /// one more try (see the class notes); on a failure that isn't the reads' fault they all wait for the
+    /// next try. Once a request is stored, reads waiting for their one more try go back in line, for the
+    /// caller's next drain. Returns how many reads were stored, how the last request went, and how long
+    /// the server asked us to wait.
     /// </summary>
-    public async Task<(int Sent, UploadOutcome Outcome, TimeSpan? RetryAfter)> SyncAsync(ScannerApi api, IReadOnlyList<SeenNote> seen, CancellationToken ct = default)
+    public async Task<(int Sent, UploadOutcome Outcome, TimeSpan? RetryAfter)> SyncAsync(ScannerApi api, CancellationToken ct = default)
     {
         int sent = 0;
-        var notes = seen;
         while (true)
         {
             var ids = Pending().Take(MaxReadsPerSync).ToList();
-            if (ids.Count == 0 && notes.Count == 0) return (sent, UploadOutcome.Stored, null);
+            if (ids.Count == 0) return (sent, UploadOutcome.Stored, null);
             var reads = new List<(string Id, Snapshot Snap)>();
             foreach (var id in ids)
             {
@@ -140,23 +103,75 @@ public sealed class SnapshotQueue(string dir)
                 catch (FileNotFoundException) { } // replaced by a newer read of the same tab meanwhile
                 catch (JsonException) { SetAside(id); } // a file we can't read back will never upload
             }
+            if (reads.Count == 0) continue; // every one was replaced or unreadable: look again, nothing to send for these
             var body = JsonSerializer.Serialize(new
             {
                 reads = reads.Select(r => r.Snap.ToSyncRead()),
-                seen = notes.Select(n => new { layout = n.Layout, name = n.Name, index = n.Index, at = n.At }),
+                // Seen notes went with the 2 s timer; the field stays, empty, so every site version parses the body alike.
+                seen = Array.Empty<object>(),
             }, CaptureMeta.Json);
             var res = await api.SyncAsync(body, ct);
-            notes = []; // sent, or lost: a note only tells a session the tab was checked
-            if (res.Outcome == UploadOutcome.Rejected) { foreach (var r in reads) SetAside(r.Id); } // the whole body was refused
+            if (res.Outcome == UploadOutcome.Rejected)
+            {
+                // The whole body was refused: one more try for reads that haven't had it this session.
+                foreach (var r in reads) SetAside(r.Id, forRetry: !_retried.Contains(r.Id));
+                return (sent, res.Outcome, null);
+            }
             if (res.Outcome != UploadOutcome.Stored) return (sent, res.Outcome, res.RetryAfter);
             for (int i = 0; i < reads.Count; i++)
             {
                 var error = i < res.ReadErrors.Count ? res.ReadErrors[i] : "no answer";
                 if (error is null) { File.Delete(Path.Combine(Directory, reads[i].Id + ".json")); sent++; }
-                else SetAside(reads[i].Id);
+                else SetAside(reads[i].Id); // refused on its own: the server looked at it, so no retry
             }
+            RequeueForRetry();
             if (ids.Count < MaxReadsPerSync) return (sent, UploadOutcome.Stored, null);
         }
+    }
+
+    /// <summary>
+    /// The server stores again: reads a whole-body refusal set aside go back in line, each once per session.
+    /// One whose tab has a newer read waiting is deleted instead, as <see cref="Enqueue"/> would have.
+    /// </summary>
+    int RequeueForRetry()
+    {
+        if (!System.IO.Directory.Exists(WholeRejectedDirectory)) return 0;
+        int n = 0;
+        foreach (var file in System.IO.Directory.EnumerateFiles(WholeRejectedDirectory, "*.json").ToList())
+        {
+            var id = Path.GetFileNameWithoutExtension(file);
+            _retried.Add(id);
+            var tab = id[(id.LastIndexOf('-') + 1)..];
+            if (System.IO.Directory.EnumerateFiles(Directory, $"*-{tab}.json").Any()) { File.Delete(file); continue; }
+            File.Move(file, Path.Combine(Directory, id + ".json"), overwrite: true);
+            n++;
+        }
+        return n;
+    }
+
+    /// <summary>How many reads are set aside, for good or for their one more try (the tray says so while there are any).</summary>
+    public int SetAsideCount() => CountJson(RejectedDirectory) + CountJson(WholeRejectedDirectory);
+
+    static int CountJson(string dir) => System.IO.Directory.Exists(dir) ? System.IO.Directory.EnumerateFiles(dir, "*.json").Count() : 0;
+
+    /// <summary>
+    /// Deletes set-aside reads (both folders) whose file was written more than <paramref name="maxAge"/>
+    /// before <paramref name="nowUtc"/>; a move keeps the time, so that's when the read was taken. Returns how many.
+    /// </summary>
+    public int DeleteSetAsideOlderThan(TimeSpan maxAge, DateTime nowUtc)
+    {
+        int n = 0;
+        foreach (var dir in new[] { RejectedDirectory, WholeRejectedDirectory })
+        {
+            if (!System.IO.Directory.Exists(dir)) continue;
+            foreach (var file in System.IO.Directory.EnumerateFiles(dir, "*.json").ToList())
+            {
+                if (nowUtc - File.GetLastWriteTimeUtc(file) <= maxAge) continue;
+                File.Delete(file);
+                n++;
+            }
+        }
+        return n;
     }
 
     /// <summary>
@@ -182,14 +197,15 @@ public sealed class SnapshotQueue(string dir)
         return n;
     }
 
-    void SetAside(string id)
+    void SetAside(string id, bool forRetry = false)
     {
         var file = Path.Combine(Directory, id + ".json");
         // A newer read of the same tab replaces the file (Enqueue) while its request is out: then
         // there's nothing left to set aside. Enqueue and SyncAsync share one thread, so this can't race.
         if (!File.Exists(file)) return;
-        System.IO.Directory.CreateDirectory(RejectedDirectory);
-        File.Move(file, Path.Combine(RejectedDirectory, id + ".json"), overwrite: true);
+        var dir = forRetry ? WholeRejectedDirectory : RejectedDirectory;
+        System.IO.Directory.CreateDirectory(dir);
+        File.Move(file, Path.Combine(dir, id + ".json"), overwrite: true);
     }
 }
 

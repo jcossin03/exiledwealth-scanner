@@ -2,31 +2,49 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using EwCapture.Core;
 using EwCapture.Core.Recognition;
+// WinForms has a LinkState of its own (for LinkLabel); ours is the device link.
+using LinkState = EwCapture.Core.LinkState;
 
 namespace EwCapture;
 
 /// <summary>Tray icon, the read key, diagnostic captures and the upload loop.</summary>
 sealed class App : ApplicationContext
 {
+    // Static initializers run in textual order, so one that reads a static declared below it sees null.
+    // 0.4.7 to 0.4.10 died on launch that way: Diagnostics called LoadBaseUrl() before Servers and
+    // ServerPath were set. So no static initializer here reads another static of this class: DataDir and
+    // Version read nothing of ours, every path below is computed when read (=>), and the server is worked
+    // out once, in the constructor (ServerProfile.Resolve), never in a static.
     public static readonly string DataDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ExiledWealth");
     /// <summary>From the csproj's Version, so releases and the app never disagree.</summary>
     public static readonly string Version = typeof(App).Assembly.GetName().Version!.ToString(3);
-    public static readonly string ToolVersion = $"ew-capture {Version}";
+    public static string ToolVersion => $"ew-capture {Version}";
     /// <summary>The read key the player picked; absent, <see cref="ReadKey.Default"/>.</summary>
-    static readonly string ReadKeyPath = Path.Combine(DataDir, "read-key.txt");
+    static string ReadKeyPath => Path.Combine(DataDir, "read-key.txt");
     /// <summary>Present once the "reads need a key press now" notice has been shown.</summary>
-    static readonly string KeypressNoticePath = Path.Combine(DataDir, "keypress-notice.txt");
+    static string KeypressNoticePath => Path.Combine(DataDir, "keypress-notice.txt");
+    static string LogPath => Path.Combine(DataDir, "log.txt");
+    static string LayoutsPath => Path.Combine(DataDir, "layouts.json");
+    // Opt-in: install a downloaded update by restarting on its own, but only while the game isn't running.
+    // Off by default; nobody gets restarted without having asked for it. Remembered as a marker file.
+    static string AutoUpdatePath => Path.Combine(DataDir, "auto-update.txt");
+    // Retries start at 30 s. While the server can't take uploads they stretch toward five minutes, or to
+    // what Retry-After asks: an outage must not be met by every scanner knocking twice a minute.
+    static readonly TimeSpan RetryMin = TimeSpan.FromSeconds(30), RetryMax = TimeSpan.FromMinutes(5);
+    /// <summary>Set by a server switch: Program starts a fresh copy once this one has let go of its mutex.</summary>
+    public static bool RestartRequested { get; private set; }
 
+    // The live site or dev, and the token file and queue folders that go with it. Worked out once (see above).
+    readonly ServerProfile _server;
+    readonly TokenStore _tokens;
     readonly NotifyIcon _tray;
     // The only trigger for a read: GGG allows a screen read only once per manual key press.
     HotkeyWindow _hotkey;
     ReadKey _readKey;
-    static readonly string LogPath = Path.Combine(DataDir, "log.txt");
     // Queues are per server: a read taken while pointed at dev must never reach the live site.
-    readonly UploadQueue _queue = new(Path.Combine(ServerDataDir, "queue"));
-    readonly SnapshotQueue _snapshots = new(Path.Combine(ServerDataDir, "snapshots"));
-    static readonly string LayoutsPath = Path.Combine(DataDir, "layouts.json");
+    readonly UploadQueue _queue;
+    readonly SnapshotQueue _snapshots;
     readonly IconCache _icons;
     readonly TabReader _tabs;
     readonly System.Windows.Forms.Timer _layoutRefresh = new() { Interval = 3_600_000 };
@@ -34,20 +52,14 @@ sealed class App : ApplicationContext
     readonly ToolStripMenuItem _readItem = new() { Enabled = false };
     readonly ToolStripMenuItem _versionItem = new() { Enabled = false };
     readonly ToolStripMenuItem _updateItem = new();
-    // Opt-in: install a downloaded update by restarting on its own, but only while the game isn't running.
-    // Off by default; nobody gets restarted without having asked for it. Remembered as a marker file.
-    static readonly string AutoUpdatePath = Path.Combine(DataDir, "auto-update.txt");
     readonly ToolStripMenuItem _autoUpdateItem = new("Install updates automatically (when the game is closed)") { CheckOnClick = true, Checked = File.Exists(AutoUpdatePath) };
     readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 6 * 3_600_000 };
+    // Where the update check stands (UpdateState in Core): both update lines in the menu come from it.
     readonly Updater _updater;
-    string _updateStatus = "not checked yet";
     string _lastRead = "none yet";
     string? _layoutsVersion;
     SynchronizationContext? _ui;
     readonly ScannerApi _api;
-    // Retries start at 30 s. While the server can't take uploads they stretch toward five minutes, or to
-    // what Retry-After asks: an outage must not be met by every scanner knocking twice a minute.
-    static readonly TimeSpan RetryMin = TimeSpan.FromSeconds(30), RetryMax = TimeSpan.FromMinutes(5);
     readonly System.Windows.Forms.Timer _retry = new() { Interval = (int)RetryMin.TotalMilliseconds };
     DateTime _nextAttempt = DateTime.MinValue;
     // Reads are sent in batches (UploadBatch decides): a new read waits 30 s for the next press, so reading
@@ -55,57 +67,60 @@ sealed class App : ApplicationContext
     // debounce timer wakes us when the presses stop; the retry tick leaves a collecting batch alone.
     readonly UploadBatch _batch = new();
     readonly System.Windows.Forms.Timer _debounce = new() { Interval = (int)UploadBatch.Quiet.TotalMilliseconds };
-    // A start-up that couldn't reach the server leaves the account unknown and the slot maps as cached:
-    // the first upload that gets through asks again (no polling). True while that catch-up is out.
-    bool _catchingUp;
     // The last "update ready; waiting for …" line logged, so the retry tick doesn't repeat it.
     string? _updateWaitLogged;
     readonly ToolStripMenuItem _accountItem = new() { Enabled = false };
     readonly ToolStripMenuItem _queueItem = new() { Enabled = false };
+    readonly ToolStripMenuItem _setAsideItem = new() { Enabled = false, Visible = false };
     readonly ToolStripMenuItem _lastItem = new() { Enabled = false };
     readonly ToolStripMenuItem _labelItem = new();
     readonly ToolStripMenuItem _linkItem = new();
-    string? _account;
+    // Linked or not, and to whom (LinkState in Core). Moved only by Link(), which also does what a move means.
+    LinkState _link;
     string? _label;
     // Notifications are hidden while a game is in front, so the menu says how the last upload went.
     string _lastUpload = "none yet";
     bool _draining;
-    // From "Link to account…" until the link answers: a second click mustn't start a second link.
-    bool _linking;
-
-    // Static initializers run in textual order: everything LoadBaseUrl() reads must be declared above its
-    // first caller (Diagnostics, below). 0.4.7 to 0.4.10 had these after it and died on launch.
-    /// <summary>The servers an install may point at: the live site and dev, nothing else, so no file can redirect uploads elsewhere.</summary>
-    static readonly string[] Servers = ["https://exiledwealth.com/", "https://dev.exiledwealth.com/"];
-    /// <summary>The server chosen from the tray menu; absent, appsettings.json decides.</summary>
-    static readonly string ServerPath = Path.Combine(DataDir, "server.txt");
-    /// <summary>Diagnostic screenshots are a dev-only tool: the live site never takes them.</summary>
-    static readonly bool Diagnostics = new Uri(LoadBaseUrl()).Host == "dev.exiledwealth.com";
-    /// <summary>Where this server's queues live. The live site keeps the original folders, so existing installs lose nothing.</summary>
-    static readonly string ServerDataDir = new Uri(LoadBaseUrl()).Host == "exiledwealth.com" ? DataDir : Path.Combine(DataDir, new Uri(LoadBaseUrl()).Host);
-    /// <summary>Set by a server switch: Program starts a fresh copy once this one has let go of its mutex.</summary>
-    public static bool RestartRequested { get; private set; }
+    // Modal windows opened from the tray: the Read key window, the link and label prompts, message boxes.
+    // The tray menu still opens behind them (a modal dialog doesn't disable the notify icon), so a menu item
+    // that opens a window does nothing while one is up, and auto-update doesn't restart under one. A count,
+    // since a message box can follow a prompt.
+    int _dialogs;
 
     public App()
     {
-        var http = new HttpClient { BaseAddress = new Uri(LoadBaseUrl()), Timeout = TimeSpan.FromSeconds(60) };
-        TokenStore.UseServer(http.BaseAddress);
+        _server = ServerProfile.Resolve(DataDir, ReadText(Path.Combine(DataDir, ServerProfile.ChoiceFileName)),
+            ReadText(Path.Combine(AppContext.BaseDirectory, "appsettings.json")), out var serverWarning);
+        if (serverWarning is not null) Log(serverWarning);
+        _queue = new UploadQueue(_server.CapturesDir);
+        _snapshots = new SnapshotQueue(_server.SnapshotsDir);
+        _tokens = new TokenStore(_server);
+        var http = new HttpClient { BaseAddress = _server.BaseUrl, Timeout = TimeSpan.FromSeconds(60) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"ew-capture/{Version} (+https://exiledwealth.com)");
-        _api = new ScannerApi(http, TokenStore.Load());
+        var token = _tokens.Load();
+        _api = new ScannerApi(http, token);
+        _link = LinkState.FromToken(token);
         _api.Log = line => { Log(line); _lastUpload = $"{DateTime.Now:HH:mm} {line}"; };
-        Log($"start {ToolVersion}, server {http.BaseAddress}, linked {_api.Token is not null}, tab-name OCR {(TabNameReader.Available ? "on" : "unavailable")}");
+        Log($"start {ToolVersion}, server {http.BaseAddress}, linked {token is not null}, tab-name OCR {(TabNameReader.Available ? "on" : "unavailable")}");
         // Screenshots queued for dev must never go to the live site (older versions could queue them there).
-        if (!Diagnostics && Directory.Exists(_queue.Directory))
+        if (!_server.IsDev && Directory.Exists(_queue.Directory))
             try { Directory.Delete(_queue.Directory, recursive: true); Log("removed queued screenshots: not used outside dev"); }
             catch (IOException e) { Log($"couldn't remove queued screenshots: {e.Message}"); }
         // Reads an older version left waiting were taken on its 2 s timer: the site refuses them, so don't send them.
         var stale = _snapshots.SetAsideOlderThan(SnapshotQueue.MinQueuedReadVersion);
         if (stale > 0) Log($"set aside {stale} reads taken by a version before {SnapshotQueue.MinQueuedReadVersion}");
+        // Set-aside reads are kept to look at (or for their one more try) for a while, not forever.
+        try
+        {
+            var old = _snapshots.DeleteSetAsideOlderThan(SnapshotQueue.KeepSetAside, DateTime.UtcNow);
+            if (old > 0) Log($"deleted {old} set-aside reads older than {SnapshotQueue.KeepSetAside.TotalDays:0} days");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"couldn't delete old set-aside reads: {e.Message}"); }
         _icons = new IconCache(Path.Combine(DataDir, "icons"), Log);
-        _updater = new Updater(LoadBaseUrl(), Log);
+        _updater = new Updater(_server, Log);
         _updateItem.Click += async (_, _) =>
         {
-            if (_updater.ReadyVersion is not null) { Log($"restarting to update to {_updater.ReadyVersion}"); _updater.RestartToApply(); return; }
+            if (_updater.State.Ready is { } v) { Log($"restarting to update to {v}"); _updater.RestartToApply(); return; }
             await CheckUpdates();
         };
         _tabs = new TabReader(_snapshots, _icons, Log,
@@ -127,13 +142,14 @@ sealed class App : ApplicationContext
             _accountItem,
             _readItem,
             _queueItem,
+            _setAsideItem,
             _lastItem,
             new ToolStripSeparator(),
             _readKeyItem,
-            // Screenshot tools exist only on dev (see Diagnostics). The read key takes the screenshots there.
-            .. (Diagnostics ? new ToolStripItem[] { _labelItem, new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()) } : []),
+            // Screenshot tools exist only on dev (ServerProfile.IsDev). The read key takes the screenshots there.
+            .. (_server.IsDev ? new ToolStripItem[] { _labelItem, new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()) } : []),
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
-            .. (Diagnostics ? new ToolStripItem[] { new ToolStripMenuItem("Retry rejected captures", null, async (_, _) => await RetryRejected()) } : []),
+            .. (_server.IsDev ? new ToolStripItem[] { new ToolStripMenuItem("Retry rejected captures", null, async (_, _) => await RetryRejected()) } : []),
             new ToolStripSeparator(),
             ServerMenu(),
             _versionItem,
@@ -175,9 +191,8 @@ sealed class App : ApplicationContext
             // Retries only: a batch still collecting goes up when the presses stop (the debounce), or
             // at UploadBatch.Max. Backoff and Retry-After hold this through _nextAttempt.
             if (_batch.DrainNow(DateTime.UtcNow, _nextAttempt)) await Drain();
-            // Opted in, an update waits for the game to close: this tick notices when it has. Not while
-            // the Link prompt is open: a restart would close it under the player.
-            if (_autoUpdateItem.Checked && !_linking) ApplyUpdateIfIdle();
+            // Opted in, an update waits for the game to close: this tick notices when it has.
+            if (_autoUpdateItem.Checked) ApplyUpdateIfIdle();
         };
         _debounce.Tick += async (_, _) => await Flush();
         _retry.Start();
@@ -190,79 +205,98 @@ sealed class App : ApplicationContext
         _ = Startup();
     }
 
-    static string ConfiguredBaseUrl()
+    /// <summary>A small settings file's text, or null when it's missing or unreadable.</summary>
+    static string? ReadText(string path)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "appsettings.json")));
-            if (doc.RootElement.TryGetProperty("baseUrl", out var v) && v.GetString() is { } url)
-                return url.EndsWith('/') ? url : url + "/";
-        }
-        catch (Exception e) when (e is IOException or JsonException) { }
-        return "https://exiledwealth.com/";
-    }
-
-    // No initializer, so declaration order doesn't matter: false until the first warning.
-    static bool _warnedConfig;
-
-    /// <summary>
-    /// The server to use: the one chosen from the tray menu, else appsettings.json's, else the live site.
-    /// Both must be one of <see cref="Servers"/>: the device token and every update come from here.
-    /// </summary>
-    static string LoadBaseUrl()
-    {
-        try { if (File.ReadAllText(ServerPath).Trim() is { } chosen && Servers.Contains(chosen)) return chosen; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NullReferenceException) { }
-        var url = ConfiguredBaseUrl();
-        if (Servers.Contains(url)) return url;
-        if (!_warnedConfig) { _warnedConfig = true; Log($"appsettings.json names {url}, which isn't one of ours: using {Servers[0]}"); }
-        return Servers[0];
+        try { return File.ReadAllText(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
     async Task Startup()
     {
-        if (_api.Token is not { } token)
-        {
+        if (_link.Kind == LinkKind.Unlinked)
             Notify("Not linked yet. Right-click the tray icon and choose Link to account.", ToolTipIcon.Info);
+        else if (await CheckAccount())
+        {
+            await LoadLayouts();
+            await Drain();
             return;
         }
+        // Unlinked, refused, or the server couldn't say: last time's slot maps. Offline, reads queue until the
+        // server answers, and the first upload that gets through finishes the check (Drain). Unlinked, a press
+        // says to link first.
+        LoadCachedLayouts();
+        RefreshMenu();
+    }
+
+    /// <summary>
+    /// Asks whose account the token is: at start-up, and after the first stored upload of a start-up that
+    /// couldn't reach the server. No polling: an answer that doesn't come is asked again after the next
+    /// stored upload. True once the account is confirmed.
+    /// </summary>
+    async Task<bool> CheckAccount()
+    {
+        if (!_link.NeedsAccountCheck || _link.Token is not { } token) return false;
+        Link(new LinkEvent.AskingWho());
         try
         {
             var who = await _api.WhoAmIAsync();
-            if (who is null) { Unlinked(token); return; }
-            _account = who.AccountName;
-            RefreshMenu();
-            await LoadLayouts();
-            await Drain();
+            Link(who is null ? new LinkEvent.Refused(token)
+                : who.AccountName is { Length: > 0 } account ? new LinkEvent.WhoAmI(token, account)
+                : new LinkEvent.WhoAmIFailed(token));
         }
-        catch (Exception e) when (e is HttpRequestException or ScannerException or TaskCanceledException)
+        // Anything escaping here would take down the tray app.
+        catch (Exception e)
         {
-            // Offline at start-up is fine: reads queue until the server answers, using the slot maps
-            // from last time. The first upload that gets through finishes this check (CatchUpAccount).
-            Log($"start-up check failed: {e.Message}");
-            LoadCachedLayouts();
-            RefreshMenu();
+            Log($"account check failed: {e.Message}");
+            Link(new LinkEvent.WhoAmIFailed(token));
         }
+        return _link.Kind == LinkKind.Linked && _link.IsCurrent(token);
+    }
+
+    /// <summary>
+    /// Moves the link state, and does what the move means. When the token goes, it's forgotten in memory
+    /// first, then on disk, so a file that won't delete can't leave this session linked; a 401 says so.
+    /// </summary>
+    void Link(LinkEvent e)
+    {
+        var before = _link;
+        _link = before.Next(e);
+        if (e is LinkEvent.Refused r && !before.IsCurrent(r.Token)) Log("401 for a token this PC no longer uses: ignored");
+        if (before.Token is not null && _link.Token is null)
+        {
+            _api.Forget();
+            try { _tokens.Clear(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log($"couldn't delete the device token file: {ex.Message}"); }
+            if (e is LinkEvent.Refused)
+                Notify("This PC was unlinked from your account. Link again from the tray menu; queued captures are kept.", ToolTipIcon.Warning);
+        }
+        RefreshMenu();
     }
 
     async Task CheckUpdates()
     {
-        _updateStatus = "checking…";
+        var check = _updater.CheckAsync(); // "checking…" from here, unless a check is already running
         RefreshMenu();
-        _updateStatus = await _updater.CheckAsync();
+        await check;
         RefreshMenu();
         if (_autoUpdateItem.Checked) ApplyUpdateIfIdle();
     }
 
     /// <summary>
-    /// With the opt-in on and an update downloaded: restart into it now, unless the game is running or an
-    /// upload is mid-flight. Queued reads are files on disk and survive the restart. Called after each
-    /// update check and on every retry tick, so a wait ends soon after the game closes; each wait is logged once.
+    /// With the opt-in on and an update downloaded: restart into it now, unless the game is running, an
+    /// upload is mid-flight, or a tray window or link is open. Queued reads are files on disk and survive the
+    /// restart. Called after each update check and on every retry tick, so a wait ends soon after the game
+    /// closes; each wait is logged once.
     /// </summary>
     void ApplyUpdateIfIdle()
     {
-        if (_updater.ReadyVersion is not { } v) return;
-        var waitingFor = GameWindow.GameRunning() ? "the game to close" : _draining ? "the upload to finish" : null;
+        if (_updater.State.Ready is not { } v) return;
+        var waitingFor = GameWindow.GameRunning() ? "the game to close"
+            : _draining ? "the upload to finish"
+            : DialogOpen ? "an Exiled Wealth window to close"
+            : _link.Kind == LinkKind.Linking ? "the link to finish"
+            : null;
         if (waitingFor is not null)
         {
             var line = $"update {v} ready; waiting for {waitingFor}";
@@ -284,11 +318,10 @@ sealed class App : ApplicationContext
     /// <summary>Server: the live site or dev. Each has its own token and queues; switching restarts the app.</summary>
     ToolStripMenuItem ServerMenu()
     {
-        var current = LoadBaseUrl();
-        var menu = new ToolStripMenuItem($"Server: {new Uri(current).Host}");
-        foreach (var url in Servers)
+        var menu = new ToolStripMenuItem($"Server: {_server.Host}");
+        foreach (var url in ServerProfile.Servers)
         {
-            var item = new ToolStripMenuItem(new Uri(url).Host) { Checked = url == current };
+            var item = new ToolStripMenuItem(new Uri(url).Host) { Checked = new Uri(url) == _server.BaseUrl };
             item.Click += (_, _) => SwitchServer(url);
             menu.DropDownItems.Add(item);
         }
@@ -297,17 +330,34 @@ sealed class App : ApplicationContext
 
     void SwitchServer(string url)
     {
-        if (!Servers.Contains(url) || url == LoadBaseUrl()) return;
+        if (DialogOpen || !ServerProfile.Servers.Contains(url) || new Uri(url) == _server.BaseUrl) return;
         // Dev turns on diagnostics (screenshot uploads): nobody ends up there by curiosity without being told.
-        if (new Uri(url).Host == "dev.exiledwealth.com" && MessageBox.Show(
+        if (url == ServerProfile.Dev && Modal(() => MessageBox.Show(
                 "dev.exiledwealth.com is the developer's test server, not the live site. It has its own login, and your stash there starts empty.\n\n"
                 + $"While this PC is linked to it, the read key ({_readKey}) also uploads a screenshot of the game window, "
                 + "with the display and UI sections of the game's settings file, to help fix misreads.\n\n"
                 + "Switch to the test server?",
-                "Exiled Wealth", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                "Exiled Wealth", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2)) != DialogResult.Yes)
             return;
-        Directory.CreateDirectory(DataDir);
-        File.WriteAllText(ServerPath, url);
+        // server.txt first: whichever copy starts next reads it.
+        try { Directory.CreateDirectory(DataDir); File.WriteAllText(_server.ChoiceFile, url); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log($"couldn't switch server: {e.Message}");
+            Modal(() => MessageBox.Show($"Couldn't switch server: {e.Message}", "Exiled Wealth", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+            return;
+        }
+        // An update is downloaded: restart into it, and the new version starts on the new server. Quitting
+        // instead would install it on exit while Program starts a fresh copy, two updaters against one exe.
+        if (_updater.State.Ready is { } v)
+        {
+            Log($"server switched to {url}: restarting into {v}");
+            _updater.RestartToApply(); // exits this process when it works
+            Log("couldn't restart into the update: restarting without installing it");
+            RestartRequested = true;
+            ExitThread(); // not Quit(): installing on exit is the race above
+            return;
+        }
         Log($"server switched to {url}: restarting");
         RestartRequested = true;
         Quit();
@@ -315,15 +365,30 @@ sealed class App : ApplicationContext
 
     void OnUi(Action a) { if (_ui is null) a(); else _ui.Post(_ => a(), null); }
 
+    bool DialogOpen => _dialogs > 0;
+
+    /// <summary>Shows a modal window, counted in <see cref="DialogOpen"/> while it's up.</summary>
+    T Modal<T>(Func<T> show)
+    {
+        _dialogs++;
+        try { return show(); }
+        finally { _dialogs--; }
+    }
+
     /// <summary>
     /// The read key: one screen copy of the game, read for the open tab. On dev the same copy is also the
     /// diagnostic screenshot, so a press never makes two copies (GGG: once per manual key press).
     /// </summary>
     void ReadNow()
     {
+        // A PC that was unlinked keeps reading into its queue (the unlink notice promises queued reads are kept,
+        // and they go up once it's linked again). One that has never loaded slot maps can't read anything, and
+        // a press mid-link waits for the link: say so, and don't copy the screen for nothing.
+        if (_link.Kind is LinkKind.Linking || (_link.Kind is LinkKind.Unlinked && !_tabs.Ready))
+        { _lastRead = "Not linked: choose Link to account in the tray menu first"; RefreshMenu(); return; }
         // The last press is still in its tab-name OCR: say so, and don't copy the screen for nothing.
         if (_tabs.Busy) { _lastRead = "Still reading the last press: press again"; RefreshMenu(); return; }
-        var diagnose = Diagnostics && _api.Token is not null;
+        var diagnose = _server.IsDev && _link.Token is not null;
         GameWindow.Capture capture;
         try
         {
@@ -357,6 +422,8 @@ sealed class App : ApplicationContext
     /// <summary>Tray menu: pick a new read key by pressing it.</summary>
     void ChangeReadKey()
     {
+        // A second Read key window would dispose the current key twice and leak the one it registers.
+        if (DialogOpen) return;
         // Let go of the current key while the dialog is open, or pressing it there would read instead of record.
         _hotkey.Dispose();
         HotkeyWindow? chosen = null;
@@ -370,7 +437,7 @@ sealed class App : ApplicationContext
         }
         using (var dialog = new ReadKeyDialog(_readKey, TryUse))
         {
-            dialog.ShowDialog();
+            Modal(() => dialog.ShowDialog());
             if (dialog.DialogResult == DialogResult.OK && dialog.Chosen is { } key && chosen is not null)
             {
                 _hotkey = chosen;
@@ -416,7 +483,7 @@ sealed class App : ApplicationContext
     async Task LoadLayouts()
     {
         LoadCachedLayouts();
-        if (_api.Token is null) return;
+        if (_link.Token is null) return;
         try
         {
             var fresh = await _api.GetLayoutsAsync(_layoutsVersion);
@@ -444,7 +511,7 @@ sealed class App : ApplicationContext
     /// <summary>Dev only: queue the read key's screen copy as a diagnostic screenshot.</summary>
     void QueueDiagnostic(GameWindow.Capture capture)
     {
-        if (!Diagnostics) return;
+        if (!_server.IsDev) return;
 
         var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var meta = new CaptureMeta(
@@ -466,8 +533,8 @@ sealed class App : ApplicationContext
 
     async Task Drain()
     {
-        // The token this drain sends with: a 401 unlinks only if it's still the current one (Unlinked).
-        if (_draining || _api.Token is not { } token || DateTime.UtcNow < _nextAttempt) return;
+        // The token this drain sends with: a 401 unlinks only if it's still the current one (LinkState).
+        if (_draining || _link.Token is not { } token || DateTime.UtcNow < _nextAttempt) return;
         _draining = true;
         var synced = false;
         try
@@ -475,27 +542,27 @@ sealed class App : ApplicationContext
             // This drain takes everything waiting, so the batch ends here; a press during the request starts a new one.
             _batch.Taken();
             _debounce.Stop();
-            // Reads and seen notes go in one request. A note is best effort: lost, it only means a session shows that tab as not opened.
-            var notes = _tabs.Seen.TakeNotes();
-            int pending = _queue.Pending().Count, reads = _snapshots.Pending().Count;
-            if (pending + reads + notes.Count == 0) return;
+            int pending = _server.IsDev ? _queue.Pending().Count : 0, reads = _snapshots.Pending().Count;
+            if (pending + reads == 0) return;
             var outcome = UploadOutcome.Stored;
             TimeSpan? retryAfter = null;
-            if (reads + notes.Count > 0)
+            if (reads > 0)
             {
                 int sentReads;
-                (sentReads, outcome, retryAfter) = await _snapshots.SyncAsync(_api, notes);
-                Log($"sync: {sentReads} of {reads} reads stored, {notes.Count} seen notes, {_snapshots.Pending().Count} still waiting ({outcome})");
+                (sentReads, outcome, retryAfter) = await _snapshots.SyncAsync(_api);
+                Log($"sync: {sentReads} of {reads} reads stored, {_snapshots.Pending().Count} still waiting ({outcome})");
                 synced = outcome == UploadOutcome.Stored;
             }
-            if (pending > 0 && Diagnostics)
+            // Dev's screenshots: not after a 401 or 429 in this drain, and their own 401 or 429 counts like the sync's.
+            if (pending > 0 && !outcome.StopsDrain())
             {
-                var sent = await _queue.DrainAsync(_api);
-                Log($"drain: {sent} of {pending} uploaded, {_queue.Pending().Count} still waiting");
+                var (sent, shots) = await _queue.DrainAsync(_api);
+                Log($"drain: {sent} of {pending} uploaded, {_queue.Pending().Count} still waiting ({shots})");
+                if (shots.StopsDrain()) outcome = shots;
             }
             switch (outcome)
             {
-                case UploadOutcome.Unlinked: Unlinked(token); break; // the 401 said so; no second request to ask
+                case UploadOutcome.Unlinked: Link(new LinkEvent.Refused(token)); break; // the 401 said so; no second request to ask
                 case UploadOutcome.RetryLater: Backoff(retryAfter); break;
                 default: _retry.Interval = (int)RetryMin.TotalMilliseconds; _nextAttempt = DateTime.MinValue; break;
             }
@@ -507,79 +574,57 @@ sealed class App : ApplicationContext
             _draining = false;
             RefreshMenu();
         }
-        if (synced && _account is null) await CatchUpAccount();
-    }
-
-    /// <summary>
-    /// Start-up couldn't reach the server, so the menu still says "(checking…)" and the slot maps are last
-    /// time's. The first upload that gets through ends that with one whoami and one layouts fetch. No
-    /// polling: this only follows an upload that happened anyway, and if it fails the next one tries again.
-    /// </summary>
-    async Task CatchUpAccount()
-    {
-        if (_catchingUp || _account is not null || _api.Token is not { } token) return;
-        _catchingUp = true;
-        try
-        {
-            var who = await _api.WhoAmIAsync();
-            if (who is null) { Unlinked(token); return; }
-            if (_api.Token != token) return; // unlinked or linked again meanwhile: that set the account
-            _account = who.AccountName;
-            Log("account checked after a start-up that couldn't reach the server");
-            RefreshMenu();
-            await LoadLayouts();
-        }
-        // Anything escaping here would take down the tray app; the next upload that gets through tries again.
-        catch (Exception e) { Log($"account check failed: {e.Message}"); }
-        finally { _catchingUp = false; }
+        // A start-up that couldn't reach the server: this upload got through, so finish its check now.
+        if (synced && _link.NeedsAccountCheck && await CheckAccount()) await LoadLayouts();
     }
 
     async Task LinkOrUnlink()
     {
-        if (_linking) return; // the menu item is disabled meanwhile; this covers a click already on its way
-        if (_api.Token is not null)
+        if (DialogOpen) return;
+        if (_link.Kind is LinkKind.Checking or LinkKind.Linked)
         {
-            if (MessageBox.Show("Unlink this PC from your Exiled Wealth account?", "Exiled Wealth",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            ForgetToken();
+            if (Modal(() => MessageBox.Show("Unlink this PC from your Exiled Wealth account?", "Exiled Wealth",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question)) != DialogResult.Yes) return;
+            Link(new LinkEvent.UnlinkRequested());
             return;
         }
+        if (!_link.CanLink) return; // a link is already in progress (the item is disabled meanwhile)
 
         // Linking: from the code prompt until the server answers, one link at a time.
-        _linking = true;
-        RefreshMenu();
+        Link(new LinkEvent.LinkStarted());
         try
         {
-            var code = Prompt.Ask("Link to Exiled Wealth",
+            var code = Modal(() => Prompt.Ask("Link to Exiled Wealth",
                 "On the Exiled Wealth site, open the Scanner page and choose Get a link code. Type the code shown there:",
-                upperCase: true);
+                upperCase: true));
             if (string.IsNullOrEmpty(code)) return;
             LinkResult result;
             try { result = await _api.LinkAsync(code, Environment.MachineName); }
             catch (Exception e) when (e is HttpRequestException or ScannerException or TaskCanceledException)
             {
-                MessageBox.Show($"Couldn't link: {e.Message}", "Exiled Wealth", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Modal(() => MessageBox.Show($"Couldn't link: {e.Message}", "Exiled Wealth", MessageBoxButtons.OK, MessageBoxIcon.Warning));
                 return;
             }
-            _account = result.AccountName;
+            Link(new LinkEvent.LinkSucceeded(result.Token, result.AccountName));
             try
             {
-                TokenStore.Save(result.Token);
+                _tokens.Save(result.Token);
                 Notify($"Linked to {result.AccountName}. Open a special tab in game and press {_readKey}: its item counts go to your account.", ToolTipIcon.Info);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or CryptographicException)
             {
                 // Linked for this session (the token is in memory), but it won't survive a restart: say so.
                 Log($"couldn't save the device token: {e.Message}");
-                MessageBox.Show($"Linked to {result.AccountName}, but this PC couldn't save the link ({e.Message}). Reads upload until Exiled Wealth closes; after that, link again.",
-                    "Exiled Wealth", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Modal(() => MessageBox.Show($"Linked to {result.AccountName}, but this PC couldn't save the link ({e.Message}). Reads upload until Exiled Wealth closes; after that, link again.",
+                    "Exiled Wealth", MessageBoxButtons.OK, MessageBoxIcon.Warning));
             }
         }
         finally
         {
-            _linking = false;
-            RefreshMenu();
+            // Cancelled, refused, or anything unexpected: never left at "Linking…".
+            if (_link.Kind == LinkKind.Linking) Link(new LinkEvent.LinkFailed());
         }
+        if (_link.Kind != LinkKind.Linked) return;
         await LoadLayouts();
         await Drain();
     }
@@ -598,33 +643,13 @@ sealed class App : ApplicationContext
         Log($"server can't take uploads right now: next try in {(int)wait.TotalSeconds} s");
     }
 
-    /// <summary>
-    /// The server refused <paramref name="token"/> (a 401). Unlink only if that's still this PC's token: an
-    /// answer to a request sent before an unlink and a fresh link must not throw the new link away.
-    /// </summary>
-    void Unlinked(string token)
-    {
-        if (_api.Token != token) { Log("401 for a token this PC no longer uses: ignored"); return; }
-        ForgetToken();
-        Notify("This PC was unlinked from your account. Link again from the tray menu; queued captures are kept.", ToolTipIcon.Warning);
-    }
-
-    /// <summary>Drop the device token: from memory first, so a file that won't delete can't leave this session linked.</summary>
-    void ForgetToken()
-    {
-        _api.Forget();
-        _account = null;
-        try { TokenStore.Clear(); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"couldn't delete the device token file: {e.Message}"); }
-        RefreshMenu();
-    }
-
     void AskLabel()
     {
+        if (DialogOpen) return;
         // Sticky until changed, so labelling never needs a dialog over the game.
-        var label = Prompt.Ask("Capture label",
+        var label = Modal(() => Prompt.Ask("Capture label",
             "Describe what the next captures show, e.g. \"currency tab, big stacks\". Leave empty for none.",
-            _label ?? "");
+            _label ?? ""));
         if (label is null) return;
         _label = label.Length == 0 ? null : label[..Math.Min(label.Length, 200)];
         RefreshMenu();
@@ -638,20 +663,33 @@ sealed class App : ApplicationContext
 
     void RefreshMenu()
     {
-        var linked = _api.Token is not null;
-        _accountItem.Text = linked ? $"Linked: {_account ?? "(checking…)"}" : "Not linked";
+        _accountItem.Text = _link.Kind switch
+        {
+            LinkKind.Linked => $"Linked: {_link.Account}",
+            LinkKind.Checking => "Linked: (checking…)",
+            _ => "Not linked",
+        };
         _readItem.Text = $"Last read: {_lastRead}";
         _readKeyItem.Text = _hotkey.Registered ? $"Read key: {_readKey} (change…)" : $"Read key: {_readKey} is taken by another program (change…)";
-        _versionItem.Text = $"Version {Version}: {_updateStatus}";
-        _updateItem.Text = _updater.ReadyVersion is { } v ? $"Restart to update to {v}" : "Check for updates";
-        _updateItem.Enabled = _updater.Installed;
-        _queueItem.Text = Diagnostics
+        var update = _updater.State;
+        _versionItem.Text = $"Version {Version}: {update.Status}";
+        _updateItem.Text = update.Action;
+        _updateItem.Enabled = update.ActionEnabled;
+        _queueItem.Text = _server.IsDev
             ? $"Waiting to upload: {_snapshots.Pending().Count} reads, {_queue.Pending().Count} screenshots"
             : $"Waiting to upload: {_snapshots.Pending().Count} reads";
+        var setAside = _snapshots.SetAsideCount();
+        _setAsideItem.Text = $"Set aside: {setAside} reads";
+        _setAsideItem.Visible = setAside > 0;
         _lastItem.Text = $"Last upload: {_lastUpload}";
         _labelItem.Text = _label is null ? "Set capture label…" : $"Label: {_label} (change…)";
-        _linkItem.Text = _linking ? "Linking…" : linked ? "Unlink this PC…" : "Link to account…";
-        _linkItem.Enabled = !_linking;
+        _linkItem.Text = _link.Kind switch
+        {
+            LinkKind.Linking => "Linking…",
+            LinkKind.Unlinked => "Link to account…",
+            _ => "Unlink this PC…",
+        };
+        _linkItem.Enabled = _link.Kind != LinkKind.Linking;
     }
 
     async Task RetryRejected()

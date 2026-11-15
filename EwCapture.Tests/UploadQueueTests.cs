@@ -69,7 +69,7 @@ public class UploadQueueTests
         q.Enqueue(Png, "{\"label\":\"b\"}");
         var (api, handler) = Api(HttpStatusCode.Created, HttpStatusCode.Created);
 
-        Assert.Equal(2, await q.DrainAsync(api));
+        Assert.Equal((2, UploadOutcome.Stored), await q.DrainAsync(api));
         Assert.Empty(q.Pending());
         Assert.All(handler.Requests, r =>
         {
@@ -86,7 +86,10 @@ public class UploadQueueTests
         q.Enqueue(Png, "{}");
         var (api, handler) = Api(HttpStatusCode.ServiceUnavailable);
 
-        Assert.Equal(0, await q.DrainAsync(api));
+        // RetryLater goes back to the caller, so a busy server backs off the whole drain (before, only a count came back).
+        var (sent, outcome) = await q.DrainAsync(api);
+        Assert.Equal((0, UploadOutcome.RetryLater), (sent, outcome));
+        Assert.True(outcome.StopsDrain());
         Assert.Equal(2, q.Pending().Count);
         Assert.Single(handler.Requests);
     }
@@ -97,7 +100,9 @@ public class UploadQueueTests
         var q = NewQueue();
         q.Enqueue(Png, "{}");
         var (api, _) = Api(HttpStatusCode.Unauthorized);
-        await q.DrainAsync(api);
+        var (_, outcome) = await q.DrainAsync(api);
+        Assert.Equal(UploadOutcome.Unlinked, outcome); // the caller unlinks, as for the sync's 401
+        Assert.True(outcome.StopsDrain());
         Assert.Single(q.Pending()); // they go up once the user links again
     }
 
@@ -108,7 +113,9 @@ public class UploadQueueTests
         q.Enqueue(Png, "{}");
         q.Enqueue(Png, "{}");
         var (api, _) = Api(HttpStatusCode.RequestEntityTooLarge, HttpStatusCode.Created);
-        Assert.Equal(1, await q.DrainAsync(api));
+        var (sent, outcome) = await q.DrainAsync(api);
+        Assert.Equal((1, UploadOutcome.Stored), (sent, outcome)); // a refused capture doesn't stop the drain
+        Assert.False(UploadOutcome.Rejected.StopsDrain());
         Assert.Empty(q.Pending());
         Assert.Equal(2, Directory.GetFiles(q.RejectedDirectory).Length); // one png + json kept
     }
