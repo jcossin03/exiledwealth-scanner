@@ -91,6 +91,14 @@ public sealed class SnapshotQueue(string dir)
     public string Directory { get; } = dir;
     public string RejectedDirectory => Path.Combine(Directory, "rejected");
 
+    /// <summary>
+    /// Reads a scanner older than this left queued are set aside at start-up, never sent (see
+    /// <see cref="SetAsideOlderThan"/>). Keep it equal to the site's MIN_UPLOAD_VERSION (worker
+    /// lib/stash.ts): the site refuses uploads from older scanners, so their reads mustn't reach it
+    /// through a newer one either. Raising one without the other lets those reads through.
+    /// </summary>
+    public static readonly Version MinQueuedReadVersion = new(0, 5, 0);
+
     public string Enqueue(Snapshot s)
     {
         System.IO.Directory.CreateDirectory(Directory);
@@ -176,8 +184,12 @@ public sealed class SnapshotQueue(string dir)
 
     void SetAside(string id)
     {
+        var file = Path.Combine(Directory, id + ".json");
+        // A newer read of the same tab replaces the file (Enqueue) while its request is out: then
+        // there's nothing left to set aside. Enqueue and SyncAsync share one thread, so this can't race.
+        if (!File.Exists(file)) return;
         System.IO.Directory.CreateDirectory(RejectedDirectory);
-        File.Move(Path.Combine(Directory, id + ".json"), Path.Combine(RejectedDirectory, id + ".json"), overwrite: true);
+        File.Move(file, Path.Combine(RejectedDirectory, id + ".json"), overwrite: true);
     }
 }
 

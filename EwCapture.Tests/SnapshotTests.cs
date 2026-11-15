@@ -150,6 +150,41 @@ public class SnapshotTests
         Assert.Single(q.Pending()); // the read is kept through all three
     }
 
+    [Fact]
+    public async Task SyncCopesWithAReadReplacedByANewerPressWhileItsRequestIsOut()
+    {
+        var q = new SnapshotQueue(Directory.CreateTempSubdirectory().FullName);
+        var a = Snapshot.From(Read((10, "Divine Orb", 1)), "A", "t", "p", T0);
+        q.Enqueue(a);
+        q.Enqueue(a with { Tab = a.Tab with { Name = "B" } });
+        q.Enqueue(a with { Tab = a.Tab with { Name = "C" } });
+        var responses = new Queue<HttpResponseMessage>([
+            // A is refused, B and C stored. A was replaced meanwhile, so its file is gone.
+            new(HttpStatusCode.OK) { Content = new StringContent("""{"league":"L","reads":[{"error":"too many tabs for one league"},{"tabId":2},{"tabId":3}],"seen":0}""") },
+            new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"error":"bad body"}""") },
+        ]);
+        var newer = 2;
+        var http = new HttpClient(new Handler(_ =>
+        {
+            // The player reads tab A again while the request is out: Enqueue replaces A's waiting file.
+            q.Enqueue(a with { CapturedAt = T0.AddMinutes(1), Reads = [new SnapshotRead(10, "Divine Orb", newer++, 0.97)] });
+            return Task.FromResult(responses.Dequeue());
+        })) { BaseAddress = new Uri("https://dev.example/") };
+        var api = new ScannerApi(http, "ewd_test");
+
+        // Per-read refusal: B and C are still deleted (before, setting A aside threw and they were sent again).
+        Assert.Equal((2, UploadOutcome.Stored, (TimeSpan?)null), await q.SyncAsync(api, []));
+        var waiting = Assert.Single(q.Pending()); // only the newer read of A
+        Assert.Equal(2, JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(Path.Combine(q.Directory, waiting + ".json")), CaptureMeta.Json)!.Reads[0].Count);
+        Assert.False(Directory.Exists(q.RejectedDirectory) && Directory.GetFiles(q.RejectedDirectory).Length > 0);
+
+        // Whole body refused: the same replace during the request sets aside D, and keeps the newest A.
+        q.Enqueue(a with { Tab = a.Tab with { Name = "D" } });
+        Assert.Equal((0, UploadOutcome.Rejected, (TimeSpan?)null), await q.SyncAsync(api, []));
+        Assert.Single(q.Pending());
+        Assert.Single(Directory.GetFiles(q.RejectedDirectory));
+    }
+
     sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> f) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) => f(r);
