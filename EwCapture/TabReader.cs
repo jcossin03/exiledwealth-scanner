@@ -28,8 +28,15 @@ sealed class TabReader
     /// </summary>
     public SeenTracker Seen { get; } = new(TimeSpan.FromMinutes(5));
 
-    /// <param name="status">Shown in the tray menu (called off the UI thread).</param>
-    /// <param name="queued">A snapshot was queued: time to upload (called off the UI thread).</param>
+    /// <summary>
+    /// True while a press is being read. A read runs on the caller's thread (the tray app's UI thread)
+    /// until the tab-name OCR, and finishes there after it, so another press only finds it true during that wait.
+    /// Check it before copying the screen: a press that can't be read shouldn't make a copy.
+    /// </summary>
+    public bool Busy => Volatile.Read(ref _busy) == 1;
+
+    /// <param name="status">Shown in the tray menu. Called from the read, on the thread that started it.</param>
+    /// <param name="queued">A snapshot was queued: time to upload. Called from the read, on the thread that started it.</param>
     public TabReader(SnapshotQueue queue, IconCache icons, Action<string> log, Action<string> status, Action queued) =>
         (_queue, _icons, _log, _status, _queued) = (queue, icons, log, status, queued);
 
@@ -43,7 +50,7 @@ sealed class TabReader
     public async Task ReadAsync(Frame screen)
     {
         if (_reader is null || _layouts is null) { _status("Not ready yet: the tab layouts haven't loaded"); return; }
-        if (Interlocked.Exchange(ref _busy, 1) == 1) return; // the previous press is still being read
+        if (Interlocked.Exchange(ref _busy, 1) == 1) return; // the previous press is still being read (callers check Busy first)
         try
         {
             var frame = screen.NormalisedTo1440();
