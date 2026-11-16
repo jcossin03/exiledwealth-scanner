@@ -24,6 +24,16 @@ in a separate private repository.)
   is by matching item pictures against tab layouts from the game data, and reads
   each stack count by matching digit templates. The tab's name is read with
   Windows' built-in OCR.
+- **Item copies, only if you turn them on** (tray menu → Record waystone and tablet
+  copies; off unless you say yes to what it reads). The game puts an item's text on
+  the clipboard when you press Ctrl+C on it. With this on, the scanner asks Windows
+  to tell it when the clipboard changes (`AddClipboardFormatListener`: no keyboard
+  hook, it never learns what you type). On a change it reads the clipboard once, and
+  only if Path of Exile 2 is the window in front and the clipboard wasn't set by
+  another program. If the text is a waystone or tablet, it's sent to your account so
+  your sessions show what you ran; anything else is dropped on the spot, never kept,
+  logged or sent ([`ItemCopy.cs`](EwCapture.Core/ItemCopy.cs)). The read follows your
+  own key press, as GGG's rule above asks. The scanner never presses Ctrl+C itself.
 
 ## What it sends
 
@@ -34,6 +44,7 @@ from GGG's image server (`web.poecdn.com`).
 |---|---|---|
 | Once, when you link | `POST /api/scanner/link` | the code from the website, and this PC's name (so you can tell your PCs apart on the website) |
 | Reads waiting (30 s after your last press, at least every 2 min while you keep pressing) | `POST /api/scanner/sync` | for each tab you read: its type, name, position and when it was read, and per slot a slot number and a count (the slot says what item it holds) ([`Snapshots.cs`](EwCapture.Core/Snapshots.cs)) |
+| Item copies waiting, with the reads (only with item copies on) | `POST /api/scanner/items` | for each waystone or tablet you copied: the item's text as the game wrote it, and when you copied it |
 | At start and hourly | `GET /api/scanner/layouts` | nothing: downloads the tab layouts |
 | At start and after errors | `GET /api/scanner/whoami` | nothing: checks the link still works |
 | At start and every 6 h | `GET /api/scanner/releases/…` | nothing: checks for updates |
@@ -65,7 +76,9 @@ Every request carries the app's version in its `User-Agent`.
 In `%LocalAppData%\ExiledWealth`: the device token (`token-exiledwealth.com.bin`,
 encrypted for your Windows user with DPAPI), `log.txt` (up to 1 MB, includes tab
 names), the tab layouts, cached item pictures (`icons/`), reads waiting to upload
-(`snapshots/`), and your read key if you changed it (`read-key.txt`). Unlink from the tray menu or the website to stop it; delete the folder
+(`snapshots/`), your read key if you changed it (`read-key.txt`), and, with item
+copies on, a marker file (`item-copies.txt`) and the copies waiting to upload
+(`item-copies/`; turning the option off deletes them). Unlink from the tray menu or the website to stop it; delete the folder
 to remove everything.
 
 ## Updates

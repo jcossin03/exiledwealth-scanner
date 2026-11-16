@@ -7,7 +7,8 @@ namespace EwCapture.Core;
 
 public sealed record LinkResult(string Token, int DeviceId, string AccountName);
 
-public sealed record WhoAmI(string AccountName, int DeviceId, string DeviceName);
+/// <param name="MapItems">This server takes waystone and tablet copies (<see cref="ItemCopy"/>).</param>
+public sealed record WhoAmI(string AccountName, int DeviceId, string DeviceName, bool MapItems = false);
 
 public enum UploadOutcome
 {
@@ -33,6 +34,12 @@ public sealed class ScannerException(string message) : Exception(message);
 /// server may say how long to wait (Retry-After); the caller holds off at least that long.
 /// </summary>
 public sealed record SyncResult(UploadOutcome Outcome, IReadOnlyList<string?> ReadErrors, TimeSpan? RetryAfter = null);
+
+/// <summary>
+/// How sending item copies went: how many the server stored and how many it refused one by one.
+/// <paramref name="NotTaken"/>: this server doesn't take item copies at all (a 404).
+/// </summary>
+public sealed record ItemsResult(UploadOutcome Outcome, int Stored = 0, int Refused = 0, TimeSpan? RetryAfter = null, bool NotTaken = false);
 
 /// <summary>Client for the /api/scanner/* routes on the Exiled Wealth Worker.</summary>
 public sealed class ScannerApi(HttpClient http, string? token = null)
@@ -97,6 +104,34 @@ public sealed class ScannerApi(HttpClient http, string? token = null)
                 foreach (var r in reads.EnumerateArray()) errors.Add(r.TryGetProperty("error", out var e) ? e.GetString() ?? "refused" : null);
             Log?.Invoke($"sync {status}: {errors.Count(e => e is null)} of {errors.Count} reads stored");
             return new(UploadOutcome.Stored, errors);
+        }
+    }
+
+    /// <summary>Waystone and tablet copies, up to 25 a request (see <see cref="ItemCopyQueue.SyncAsync"/>).</summary>
+    public async Task<ItemsResult> SendItemsAsync(string bodyJson, CancellationToken ct = default)
+    {
+        using var req = Authed(HttpMethod.Post, "api/scanner/items");
+        req.Content = new StringContent(bodyJson, System.Text.Encoding.UTF8, "application/json");
+        HttpResponseMessage res;
+        try { res = await http.SendAsync(req, ct); }
+        catch (HttpRequestException e) { Log?.Invoke($"item copies failed to connect: {e.Message}"); return new(UploadOutcome.RetryLater); }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested) { Log?.Invoke("item copies timed out"); return new(UploadOutcome.RetryLater); }
+        using (res)
+        {
+            var status = (int)res.StatusCode;
+            if (!res.IsSuccessStatusCode)
+            {
+                Log?.Invoke($"item copies {status}: {await ErrorText(res, ct)}");
+                var outcome = status switch { 401 => UploadOutcome.Unlinked, 400 or 404 or 413 or 415 => UploadOutcome.Rejected, _ => UploadOutcome.RetryLater };
+                return new(outcome, RetryAfter: outcome == UploadOutcome.RetryLater ? RetryAfter(res) : null, NotTaken: status == 404);
+            }
+            int stored = 0, refused = 0;
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("items", out var items))
+                foreach (var i in items.EnumerateArray())
+                    if (i.TryGetProperty("stored", out var s) && s.ValueKind == JsonValueKind.True) stored++; else refused++;
+            Log?.Invoke($"item copies {status}: {stored} stored, {refused} refused");
+            return new(UploadOutcome.Stored, stored, refused);
         }
     }
 

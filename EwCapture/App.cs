@@ -7,7 +7,7 @@ using LinkState = EwCapture.Core.LinkState;
 
 namespace EwCapture;
 
-/// <summary>Tray icon, the read key, diagnostic captures and the upload loop.</summary>
+/// <summary>Tray icon, the read key, item copies, diagnostic captures and the upload loop.</summary>
 sealed class App : ApplicationContext
 {
     // Static initializers run in textual order, so one that reads a static declared below it sees null.
@@ -29,6 +29,8 @@ sealed class App : ApplicationContext
     // Opt-in: install a downloaded update by restarting on its own, but only while the game isn't running.
     // Off by default; nobody gets restarted without having asked for it. Remembered as a marker file.
     static string AutoUpdatePath => Path.Combine(DataDir, "auto-update.txt");
+    // Opt-in: read the player's own Ctrl+C copies of waystones and tablets. Off by default; a marker file.
+    static string ItemCopiesPath => Path.Combine(DataDir, "item-copies.txt");
     // Retries start at 30 s. While the server can't take uploads they stretch toward five minutes, or to
     // what Retry-After asks: an outage must not be met by every scanner knocking twice a minute.
     static readonly TimeSpan RetryMin = TimeSpan.FromSeconds(30), RetryMax = TimeSpan.FromMinutes(5);
@@ -45,6 +47,15 @@ sealed class App : ApplicationContext
     // Queues are per server: a read taken while pointed at dev must never reach the live site.
     readonly UploadQueue _queue;
     readonly SnapshotQueue _snapshots;
+    // Waystone and tablet copies (ItemCopy in Core). The watcher exists only while the player has them turned on.
+    readonly ItemCopyQueue _copies;
+    readonly ItemCopyGate _copyGate = new();
+    ClipboardWatcher? _clipboard;
+    // Whether this server takes item copies (whoami says): null until it has answered, and nothing is read until it says yes.
+    bool? _serverTakesCopies;
+    string _lastCopy = "none yet";
+    readonly ToolStripMenuItem _copiesItem = new("Record waystone and tablet copies (Ctrl+C in game)") { Checked = File.Exists(ItemCopiesPath) };
+    readonly ToolStripMenuItem _lastCopyItem = new() { Enabled = false };
     readonly IconCache _icons;
     readonly TabReader _tabs;
     readonly System.Windows.Forms.Timer _layoutRefresh = new() { Interval = 3_600_000 };
@@ -94,6 +105,7 @@ sealed class App : ApplicationContext
         if (serverWarning is not null) Log(serverWarning);
         _queue = new UploadQueue(_server.CapturesDir);
         _snapshots = new SnapshotQueue(_server.SnapshotsDir);
+        _copies = new ItemCopyQueue(_server.ItemCopiesDir);
         _tokens = new TokenStore(_server);
         var http = new HttpClient { BaseAddress = _server.BaseUrl, Timeout = TimeSpan.FromSeconds(60) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"ew-capture/{Version} (+https://exiledwealth.com)");
@@ -101,7 +113,7 @@ sealed class App : ApplicationContext
         _api = new ScannerApi(http, token);
         _link = LinkState.FromToken(token);
         _api.Log = line => { Log(line); _lastUpload = $"{DateTime.Now:HH:mm} {line}"; };
-        Log($"start {ToolVersion}, server {http.BaseAddress}, linked {token is not null}, tab-name OCR {(TabNameReader.Available ? "on" : "unavailable")}");
+        Log($"start {ToolVersion}, server {http.BaseAddress}, linked {token is not null}, tab-name OCR {(TabNameReader.Available ? "on" : "unavailable")}, item copies {(_copiesItem.Checked ? "on" : "off")}");
         // Screenshots queued for dev must never go to the live site (older versions could queue them there).
         if (!_server.IsDev && Directory.Exists(_queue.Directory))
             try { Directory.Delete(_queue.Directory, recursive: true); Log("removed queued screenshots: not used outside dev"); }
@@ -127,6 +139,7 @@ sealed class App : ApplicationContext
             status => OnUi(() => { _lastRead = status; RefreshMenu(); }),
             () => OnUi(Queued));
         _readKeyItem.Click += (_, _) => ChangeReadKey();
+        _copiesItem.Click += (_, _) => ToggleItemCopies();
         _autoUpdateItem.CheckedChanged += (_, _) =>
         {
             try { if (_autoUpdateItem.Checked) File.WriteAllText(AutoUpdatePath, "on"); else File.Delete(AutoUpdatePath); }
@@ -146,6 +159,8 @@ sealed class App : ApplicationContext
             _lastItem,
             new ToolStripSeparator(),
             _readKeyItem,
+            _copiesItem,
+            _lastCopyItem,
             // Screenshot tools exist only on dev (ServerProfile.IsDev). The read key takes the screenshots there.
             .. (_server.IsDev ? new ToolStripItem[] { _labelItem, new ToolStripMenuItem("Open queue folder", null, (_, _) => OpenQueueFolder()) } : []),
             new ToolStripMenuItem("Open log", null, (_, _) => OpenLog()),
@@ -173,6 +188,7 @@ sealed class App : ApplicationContext
 
         // The menu is a control, so WinForms has installed its UI context by now.
         _ui = SynchronizationContext.Current;
+        if (_copiesItem.Checked) ListenForCopies();
         _readKey = LoadReadKey();
         _hotkey = Register(_readKey);
         Log($"read key {_readKey} registered: {_hotkey.Registered}");
@@ -241,6 +257,7 @@ sealed class App : ApplicationContext
         try
         {
             var who = await _api.WhoAmIAsync();
+            if (who is not null) ServerTakesCopies(who.MapItems);
             Link(who is null ? new LinkEvent.Refused(token)
                 : who.AccountName is { Length: > 0 } account ? new LinkEvent.WhoAmI(token, account)
                 : new LinkEvent.WhoAmIFailed(token));
@@ -404,6 +421,102 @@ sealed class App : ApplicationContext
         if (diagnose) QueueDiagnostic(capture);
     }
 
+    /// <summary>What whoami said about item copies. A server that doesn't take them gets none: what's waiting is dropped.</summary>
+    void ServerTakesCopies(bool takes)
+    {
+        if (_serverTakesCopies == takes) return;
+        _serverTakesCopies = takes;
+        if (!takes)
+        {
+            var dropped = _copies.Clear();
+            if (dropped > 0) Log($"dropped {dropped} item copies: {_server.Host} doesn't take them");
+        }
+        RefreshMenu();
+    }
+
+    /// <summary>After a fresh link, which doesn't ask whoami: does this server take item copies?</summary>
+    async Task AskAboutCopies()
+    {
+        try { if (await _api.WhoAmIAsync() is { } who) ServerTakesCopies(who.MapItems); }
+        catch (Exception e) when (e is HttpRequestException or ScannerException or TaskCanceledException) { Log($"couldn't ask about item copies: {e.Message}"); }
+    }
+
+    /// <summary>
+    /// Tray menu: turn item copies on (after saying what is read and sent, as GGG's rules ask) or off.
+    /// Off also drops the copies still waiting to upload.
+    /// </summary>
+    void ToggleItemCopies()
+    {
+        if (DialogOpen) return;
+        if (_copiesItem.Checked)
+        {
+            _copiesItem.Checked = false;
+            try { File.Delete(ItemCopiesPath); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"couldn't forget the item copies setting: {e.Message}"); }
+            _clipboard?.Dispose();
+            _clipboard = null;
+            Log($"item copies off; {_copies.Clear()} waiting copies dropped");
+            RefreshMenu();
+            return;
+        }
+        if (Modal(() => MessageBox.Show(
+                "While this is on, pressing Ctrl+C on a waystone or tablet in Path of Exile 2 sends that item's text to your Exiled Wealth account, so your sessions show what you ran.\n\n"
+                + "Exiled Wealth looks at the clipboard only when it changes while the game is in front. Anything that isn't a waystone or tablet is ignored: not kept, not logged, not sent.\n\n"
+                + "Turn it on?",
+                "Exiled Wealth", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2)) != DialogResult.Yes)
+            return;
+        try { Directory.CreateDirectory(DataDir); File.WriteAllText(ItemCopiesPath, "on"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"couldn't remember the item copies setting: {e.Message}"); }
+        _copiesItem.Checked = true;
+        ListenForCopies();
+        Log("item copies on");
+        RefreshMenu();
+    }
+
+    void ListenForCopies()
+    {
+        _clipboard ??= new ClipboardWatcher(ClipboardChanged);
+        if (!_clipboard.Listening) Log("couldn't listen for clipboard changes: item copies won't be seen");
+    }
+
+    /// <summary>
+    /// The clipboard changed. GGG allows one clipboard read per manual key press; the press here is the
+    /// player's own Ctrl+C in the game. So whether to read is settled before the clipboard is opened
+    /// (ItemCopyGate): the option on, a server that takes copies, the game in front, the clipboard set by the
+    /// game. Then one read, and only a waystone or tablet copy goes any further (ItemCopy.Accept).
+    /// </summary>
+    void ClipboardChanged()
+    {
+        // Runs inside a window procedure: anything escaping would take down the tray app.
+        try
+        {
+            // Not linked: there's no account to send a copy to, so none is read.
+            if (!_copiesItem.Checked || _serverTakesCopies != true || _link.Token is null) return;
+            var (window, _) = GameWindow.Find(onlyIfInFront: true);
+            bool? ownerIsGame = null;
+            if (window is not null && Native.GetClipboardOwner() is var owner && owner != IntPtr.Zero)
+            {
+                Native.GetWindowThreadProcessId(owner, out var ownerProcess);
+                Native.GetWindowThreadProcessId(window.Handle, out var gameProcess);
+                ownerIsGame = ownerProcess == gameProcess;
+            }
+            var now = DateTime.UtcNow;
+            if (!_copyGate.MayRead(true, true, window is not null, ownerIsGame, now)) return;
+            string text;
+            try { text = Clipboard.GetText(TextDataFormat.UnicodeText); }
+            catch (System.Runtime.InteropServices.ExternalException) { return; } // another program holds the clipboard: this copy is missed
+            if (_copyGate.Keep(ItemCopy.Accept(text), now) is not { } item) return;
+            _copies.Enqueue(DateTimeOffset.UtcNow, item);
+            var label = ItemCopy.Label(item);
+            _lastCopy = $"{DateTime.Now:HH:mm} {label}";
+            // "no owner" tells us how the game sets the clipboard, should the owner check ever need another look.
+            Log($"item copy queued: {label}{(ownerIsGame is null ? " (the clipboard named no owner)" : "")}");
+            Queued();
+            RefreshMenu();
+        }
+        catch (Exception e) { Log($"item copy failed: {e.Message}"); }
+    }
+
     /// <summary>The saved read key, or the default when there's none (or it's unreadable).</summary>
     static ReadKey LoadReadKey()
     {
@@ -542,8 +655,8 @@ sealed class App : ApplicationContext
             // This drain takes everything waiting, so the batch ends here; a press during the request starts a new one.
             _batch.Taken();
             _debounce.Stop();
-            int pending = _server.IsDev ? _queue.Pending().Count : 0, reads = _snapshots.Pending().Count;
-            if (pending + reads == 0) return;
+            int pending = _server.IsDev ? _queue.Pending().Count : 0, reads = _snapshots.Pending().Count, copies = _copies.Pending().Count;
+            if (pending + reads + copies == 0) return;
             var outcome = UploadOutcome.Stored;
             TimeSpan? retryAfter = null;
             if (reads > 0)
@@ -552,6 +665,14 @@ sealed class App : ApplicationContext
                 (sentReads, outcome, retryAfter) = await _snapshots.SyncAsync(_api);
                 Log($"sync: {sentReads} of {reads} reads stored, {_snapshots.Pending().Count} still waiting ({outcome})");
                 synced = outcome == UploadOutcome.Stored;
+            }
+            // Item copies: not after a 401 or 429 in this drain, and their own counts like the sync's.
+            if (copies > 0 && !outcome.StopsDrain())
+            {
+                var (sentCopies, how, wait, notTaken) = await _copies.SyncAsync(_api);
+                Log($"item copies: {sentCopies} of {copies} stored, {_copies.Pending().Count} still waiting ({how})");
+                if (how.StopsDrain()) { outcome = how; retryAfter = wait; }
+                if (notTaken) ServerTakesCopies(false);
             }
             // Dev's screenshots: not after a 401 or 429 in this drain, and their own 401 or 429 counts like the sync's.
             if (pending > 0 && !outcome.StopsDrain())
@@ -625,6 +746,7 @@ sealed class App : ApplicationContext
             if (_link.Kind == LinkKind.Linking) Link(new LinkEvent.LinkFailed());
         }
         if (_link.Kind != LinkKind.Linked) return;
+        await AskAboutCopies();
         await LoadLayouts();
         await Drain();
     }
@@ -675,9 +797,19 @@ sealed class App : ApplicationContext
         _versionItem.Text = $"Version {Version}: {update.Status}";
         _updateItem.Text = update.Action;
         _updateItem.Enabled = update.ActionEnabled;
-        _queueItem.Text = _server.IsDev
-            ? $"Waiting to upload: {_snapshots.Pending().Count} reads, {_queue.Pending().Count} screenshots"
-            : $"Waiting to upload: {_snapshots.Pending().Count} reads";
+        var copies = _copies.Pending().Count;
+        _queueItem.Text = $"Waiting to upload: {_snapshots.Pending().Count} reads"
+            + (_server.IsDev ? $", {_queue.Pending().Count} screenshots" : "")
+            + (copies > 0 ? $", {copies} item copies" : "");
+        // Offered only where the server takes them; shown while on either way, so it can always be turned off.
+        _copiesItem.Visible = _serverTakesCopies == true || _copiesItem.Checked;
+        _lastCopyItem.Visible = _copiesItem.Checked;
+        _lastCopyItem.Text = _serverTakesCopies switch
+        {
+            true => $"Last copy: {_lastCopy}",
+            false => $"Item copies: {_server.Host} doesn't take them yet",
+            null => "Item copies: waiting for the server",
+        };
         var setAside = _snapshots.SetAsideCount();
         _setAsideItem.Text = $"Set aside: {setAside} reads";
         _setAsideItem.Visible = setAside > 0;
@@ -740,6 +872,7 @@ sealed class App : ApplicationContext
             _layoutRefresh.Dispose();
             _updateTimer.Dispose();
             _hotkey.Dispose();
+            _clipboard?.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
         }
