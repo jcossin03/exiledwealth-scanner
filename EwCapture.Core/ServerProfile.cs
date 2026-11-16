@@ -36,6 +36,9 @@ public sealed record ServerProfile(Uri BaseUrl, bool IsDev, string DataDir, stri
     /// <summary>Dev's diagnostic screenshots waiting to go up (<see cref="UploadQueue"/>).</summary>
     public string CapturesDir => Path.Combine(QueuesDir, "queue");
 
+    /// <summary>Waystone and tablet copies waiting to go up (<see cref="ItemCopyQueue"/>).</summary>
+    public string ItemCopiesDir => Path.Combine(QueuesDir, "item-copies");
+
     public string ChoiceFile => Path.Combine(DataDir, ChoiceFileName);
 
     /// <summary>
